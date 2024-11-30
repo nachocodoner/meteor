@@ -139,7 +139,7 @@ BCp.processOneFileForTarget = function (inputFile, source) {
 
     try {
       var result = profile('Babel.compile', function () {
-        if (['build/client.js', 'build/server.js'].includes(babelOptions.filename)) {
+        if (Meteor.isDevelopment && ['build/client.js', 'build/server.js'].includes(babelOptions.filename)) {
           codeCompiledCache[babelOptions.filename] = codeCompiledCache[babelOptions.filename] || Babel.compile(source, babelOptions, cacheOptions);
           let sourceMap = {};
           try {
