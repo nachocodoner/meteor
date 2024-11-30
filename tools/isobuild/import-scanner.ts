@@ -980,6 +980,10 @@ export default class ImportScanner {
       return IMPORT_SCANNER_CACHE.get(file.hash);
     }
 
+    if (['./build/client.js', './build/server.js'].includes(file.sourcePath)) {
+      return {};
+    }
+
     const result = findImportedModuleIdentifiers(
       this.getDataString(file),
       file.hash,

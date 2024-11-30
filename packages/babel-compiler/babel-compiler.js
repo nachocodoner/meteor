@@ -1,5 +1,7 @@
 var semver = Npm.require("semver");
 var JSON5 = Npm.require("json5");
+
+var codeCompiledCache = {};
 /**
  * A compiler that can be instantiated with features and used inside
  * Plugin.registerCompiler
@@ -137,6 +139,18 @@ BCp.processOneFileForTarget = function (inputFile, source) {
 
     try {
       var result = profile('Babel.compile', function () {
+        if (['build/client.js', 'build/server.js'].includes(babelOptions.filename)) {
+          codeCompiledCache[babelOptions.filename] = codeCompiledCache[babelOptions.filename] || Babel.compile(source, babelOptions, cacheOptions);
+          let sourceMap = {};
+          try {
+            var mapData = fs.readFileSync(babelOptions.filename + '.map', 'utf8');
+            const json = JSON.parse(mapData);
+            sourceMap = { mappings: json.mappings, version: json.version };
+          } catch (e) {
+            // console.error('Error reading source map', e);
+          }
+          return { ...codeCompiledCache[babelOptions.filename], code: source, hash: toBeAdded.hash, ...sourceMap };
+        }
         return Babel.compile(source, babelOptions, cacheOptions);
       });
     } catch (e) {
