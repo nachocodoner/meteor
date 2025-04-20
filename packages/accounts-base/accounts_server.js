@@ -1810,4 +1810,3 @@ const generateCasePermutationsForString = string => {
   }
   return permutations;
 }
-

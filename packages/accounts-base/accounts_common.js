@@ -86,7 +86,7 @@ export class AccountsCommon {
       throw new Meteor.Error('Collection parameter can be only of type string or "Mongo.Collection"');
     }
 
-    let collectionName = 'users';
+    let collectionName = 'Users';
     if (typeof options.collection === 'string') {
       collectionName = options.collection;
     }
