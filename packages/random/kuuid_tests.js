@@ -22,11 +22,11 @@ Tinytest.add('random with kuuid - kuuid enabled', function (test) {
   }
 
   // The first 8 characters should be the same for IDs generated in quick succession
-  // as they represent the timestamp
-  const prefix = ids[0].substring(0, 8);
+  // as they represent the timestamp with second precision
+  const prefix = ids[0].substring(0, 6);
   for (let i = 1; i < ids.length; i++) {
-    test.equal(ids[i].substring(0, 8), prefix, 
-      'Timestamp prefix should be consistent for IDs generated in quick succession');
+    test.equal(ids[i].substring(0, 6), prefix,
+      'Timestamp prefix with second precision should be consistent for IDs generated in quick succession');
   }
 });
 

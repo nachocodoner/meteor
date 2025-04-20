@@ -13,7 +13,11 @@ export function isKuuidEnabled(options) {
   if (options && options.kuuid !== undefined) {
     return options.kuuid;
   }
-  return false;
+  // Check if kuuid is enabled in Meteor.settings
+  if (Meteor.settings?.public?.packages?.random?.kuuid) {
+    return Meteor.settings.public.packages.random.kuuid;
+  }
+  return Meteor.isServer ? process.env.METEOR_PACKAGES_RANDOM_KUUID || false  : false;
 }
 
 import { Meteor } from 'meteor/meteor';
@@ -41,9 +45,9 @@ function uniqueId() {
 export default class RandomGenerator {
   constructor(options = {}) {
     this.options = options;
-    this.cachedPrefix = null;
-    this.cachedPrefixTimestamp = 0;
-    this.defaultLength = options.length || 17; // Default length for IDs
+    // Check length in Meteor.settings as well
+    this.defaultLength = options.length || Meteor.settings?.public?.packages?.random?.length ||
+      (Meteor.isServer ? process.env.METEOR_PACKAGES_RANDOM_LENGTH : false) || 17; // Default length for IDs
   }
 
   /**
