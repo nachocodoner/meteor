@@ -13,7 +13,7 @@ export const CORDOVA_ARCH = "web.cordova";
 
 export const CORDOVA_PLATFORMS = ['ios', 'android'];
 
-const CORDOVA_ANDROID_VERSION = "10.1.2";
+const CORDOVA_ANDROID_VERSION = "https://github.com/meteor/cordova-android.git#meteor-2.16.1";
 
 export const CORDOVA_DEV_BUNDLE_VERSIONS = {
   'cordova-lib': '10.0.0',
@@ -25,7 +25,7 @@ export const CORDOVA_DEV_BUNDLE_VERSIONS = {
 
 export const CORDOVA_PLATFORM_VERSIONS = {
   'android': CORDOVA_ANDROID_VERSION,
-  'ios': '6.2.0',
+  'ios': 'https://github.com/meteor/cordova-ios.git#meteor-2.16.1',
 };
 
 export const SWIFT_VERSION = 5;
