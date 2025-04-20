@@ -229,7 +229,9 @@ export default class LocalCollection {
           return;
         }
 
-        if (query.matcher.documentMatches(removeDoc).result) {
+        var docMatches = query.matcher.documentMatches(removeDoc); // freak2geek change
+        if (docMatches == null) return;
+        if (docMatches.result) {
           if (query.cursor.skip || query.cursor.limit) {
             queriesToRecompute.push(qid);
           } else {
@@ -983,12 +985,13 @@ LocalCollection._findInOrderedResults = (query, doc) => {
   }
 
   for (let i = 0; i < query.results.length; i++) {
-    if (query.results[i] === doc) {
+    if (query.results[i]._id === doc._id) { // f2g: modify
       return i;
     }
   }
 
-  throw Error('object missing from query');
+  // f2g: modify
+  // throw Error('object missing from query');
 };
 
 // If this is a selector which explicitly constrains the match by ID to a finite
