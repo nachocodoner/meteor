@@ -7,4 +7,5 @@ import createRandom from './createRandom';
 
 // Create the Random object with default options
 // You can pass { kuuid: true } or { kuuid: false } to explicitly enable or disable kuuid
-export const Random = createRandom(new NodeRandomGenerator({ kuuid: undefined }));
+// You can also pass { length: n } to set the default length for generated IDs
+export const Random = createRandom(new NodeRandomGenerator({ kuuid: undefined, length: undefined }));

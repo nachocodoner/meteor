@@ -51,3 +51,23 @@ Tinytest.add('random - createWithSeeds requires parameters', function (test) {
     Random.createWithSeeds();
   });
 });
+
+Tinytest.add('random - length configuration', function (test) {
+  // Create a random generator with a custom default length
+  const customLength = 25;
+  const RandomGenerator = Meteor.isServer ? 
+    require('./NodeRandomGenerator').default : 
+    require('./BrowserRandomGenerator').default;
+  const randomWithCustomLength = require('./createRandom').default(
+    new RandomGenerator({ length: customLength })
+  );
+
+  // Test that the default length is used when no length is specified
+  const id = randomWithCustomLength.id();
+  test.equal(id.length, customLength, 'ID should use the configured default length');
+
+  // Test that an explicit length overrides the default
+  const explicitLength = 30;
+  const idWithExplicitLength = randomWithCustomLength.id(explicitLength);
+  test.equal(idWithExplicitLength.length, explicitLength, 'Explicit length should override default');
+});

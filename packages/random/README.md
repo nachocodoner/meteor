@@ -9,6 +9,10 @@ cryptographically strong randomness is not available (on older browsers or on
 servers that don't have enough entropy to seed the cryptographically strong
 generator).
 
+You can configure the default length for generated IDs by passing a `length` option
+when creating a random generator: `new RandomGenerator({ length: 25 })`. This will
+affect the default length used by `Random.id()` when no length is specified.
+
 - `Random.id([n])` - Returns a unique identifier, such as `"Jjwjg6gouWLXhMGKW"`, that is
 likely to be unique in the whole world. The optional argument `n`
 specifies the length of the identifier in characters and defaults to 17.

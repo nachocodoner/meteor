@@ -43,6 +43,7 @@ export default class RandomGenerator {
     this.options = options;
     this.cachedPrefix = null;
     this.cachedPrefixTimestamp = 0;
+    this.defaultLength = options.length || 17; // Default length for IDs
   }
 
   /**
@@ -97,7 +98,7 @@ export default class RandomGenerator {
     // 17 characters is around 96 bits of entropy, which is the amount of
     // state in the Alea PRNG.
     if (charsCount === undefined) {
-      charsCount = 17;
+      charsCount = this.defaultLength;
     }
 
     return this._randomString(charsCount, UNMISTAKABLE_CHARS);
