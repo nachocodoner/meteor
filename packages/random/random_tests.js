@@ -82,12 +82,14 @@ Tinytest.add('random - Meteor.settings.packages.random options', function (test)
   try {
     // Set test settings
     Meteor.settings = {
-      packages: {
-        random: {
-          kuuid: true,
-          length: 25
+      public: {
+        packages: {
+          random: {
+            kuuid: true,
+            length: 25
+          }
         }
-      }
+      },
     };
 
     // Create a new random generator that should use the settings
@@ -114,7 +116,7 @@ Tinytest.add('random - Meteor.settings.packages.random options', function (test)
     }
 
     // Test with kuuid disabled via settings
-    Meteor.settings.packages.random.kuuid = false;
+    Meteor.settings.public.packages.random.kuuid = false;
     const randomWithKuuidDisabled = createRandom(new RandomGeneratorClass());
 
     // Generate IDs with kuuid disabled
