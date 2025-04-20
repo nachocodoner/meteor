@@ -75,8 +75,8 @@ function Alea(seeds) {
 //   whose items will be `toString`ed and used as the seed to the Alea
 //   algorithm
 export default class AleaRandomGenerator extends RandomGenerator {
-  constructor ({ seeds = [] } = {}) {
-    super();
+  constructor ({ seeds = [], kuuid } = {}) {
+    super({ kuuid });
     if (!seeds) {
       throw new Error('No seeds were provided for Alea PRNG');
     }

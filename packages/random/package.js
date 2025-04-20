@@ -15,5 +15,5 @@ Package.onTest(function (api) {
   api.use('random');
   api.use('ecmascript');
   api.use('tinytest');
-  api.mainModule('random_tests.js');
+  api.addFiles(['random_tests.js', 'kuuid_tests.js']);
 });

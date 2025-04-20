@@ -8,12 +8,18 @@ export default function createRandom(generator) {
     if (seeds.length === 0) {
       throw new Error('No seeds were provided');
     }
-    return new AleaRandomGenerator({ seeds });
+    // Pass through the kuuid option from the generator if it exists
+    return new AleaRandomGenerator({ 
+      seeds,
+      kuuid: generator.options && generator.options.kuuid
+    });
   };
 
   // Used like `Random`, but much faster and not cryptographically
   // secure
-  generator.insecure = createAleaGeneratorWithGeneratedSeed();
+  generator.insecure = createAleaGeneratorWithGeneratedSeed({ 
+    kuuid: generator.options && generator.options.kuuid 
+  });
 
   return generator;
 }

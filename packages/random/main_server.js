@@ -5,4 +5,6 @@
 import NodeRandomGenerator from './NodeRandomGenerator';
 import createRandom from './createRandom';
 
-export const Random = createRandom(new NodeRandomGenerator());
+// Create the Random object with default options
+// You can pass { kuuid: true } or { kuuid: false } to explicitly enable or disable kuuid
+export const Random = createRandom(new NodeRandomGenerator({ kuuid: undefined }));

@@ -7,10 +7,13 @@
 // window.crypto.getRandomValues() or alea, the primitive is fraction and we use
 // that to construct hex string.
 
-// TODO - Ensure a configurable option in meteor to enable/disable kuuid
-// TODO - in the Meteor app config at package.json
-function isKuuidEnabled() {
-  return process.env.METEOR_KUUID_ENABLED != null ? true : false;
+// Check if kuuid is enabled either through environment variable or configuration option
+export function isKuuidEnabled(options) {
+  // Check if kuuid is explicitly enabled/disabled in options
+  if (options && options.kuuid !== undefined) {
+    return options.kuuid;
+  }
+  return false;
 }
 
 import { Meteor } from 'meteor/meteor';
@@ -36,6 +39,11 @@ function uniqueId() {
 //   whose items will be `toString`ed and used as the seed to the Alea
 //   algorithm
 export default class RandomGenerator {
+  constructor(options = {}) {
+    this.options = options;
+    this.cachedPrefix = null;
+    this.cachedPrefixTimestamp = 0;
+  }
 
   /**
    * @name Random.fraction
@@ -60,7 +68,7 @@ export default class RandomGenerator {
     let _charsCount = charsCount;
     let prefix = '';
     let uniqId = '';
-    if (isKuuidEnabled()) {
+    if (isKuuidEnabled(this.options)) {
       if (charsCount > 8) {
         _charsCount = charsCount - 9;
         prefix = prefixedId({ millisecond: true });
