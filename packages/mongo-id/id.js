@@ -82,7 +82,8 @@ MongoID.idStringify = (id) => {
 };
 
 MongoID.idParse = (id) => {
-  var firstChar = id.charAt(0);
+  var idStr = typeof id === 'string' ? id : id._str; // freak2geek change (kuuid support)
+  var firstChar = idStr.charAt(0);
   if (id === '') {
     return id;
   } else if (id === '-') {

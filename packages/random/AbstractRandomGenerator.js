@@ -7,11 +7,27 @@
 // window.crypto.getRandomValues() or alea, the primitive is fraction and we use
 // that to construct hex string.
 
+// TODO - Ensure a configurable option in meteor to enable/disable kuuid
+// TODO - in the Meteor app config at package.json
+function isKuuidEnabled() {
+  return process.env.METEOR_KUUID_ENABLED != null ? true : false;
+}
+
 import { Meteor } from 'meteor/meteor';
+import { id as prefixedId } from './kuuid';
+
 
 const UNMISTAKABLE_CHARS = '23456789ABCDEFGHJKLMNPQRSTWXYZabcdefghijkmnopqrstuvwxyz';
 const BASE64_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ' +
   '0123456789-_';
+
+var idCounter = 0;
+
+function uniqueId() {
+  if (idCounter === BASE64_CHARS.length) idCounter = 0;
+  var _id = ++idCounter;
+  return _id;
+}
 
 // `type` is one of `RandomGenerator.Type` as defined below.
 //
@@ -41,11 +57,24 @@ export default class RandomGenerator {
   }
 
   _randomString (charsCount, alphabet) {
-    let result = '';
-    for (let i = 0; i < charsCount; i++) {	
-      result += this.choice(alphabet);
+    let _charsCount = charsCount;
+    let prefix = '';
+    let uniqId = '';
+    if (isKuuidEnabled()) {
+      if (charsCount > 8) {
+        _charsCount = charsCount - 9;
+        prefix = prefixedId({ millisecond: true });
+        const _id = uniqueId();
+        const alphabetPos = _id % alphabet.length;
+        uniqId = alphabet.charAt(alphabetPos) + '';
+      }
     }
-    return result;
+
+    let _random = '';
+    for (let i = 0; i < _charsCount; i++) {
+      _random += this.choice(alphabet);
+    }
+    return prefix + uniqId + _random;
   }
 
   /**
