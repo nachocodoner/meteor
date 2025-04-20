@@ -236,7 +236,7 @@ Object.assign(SessionCollectionView.prototype, {
     docView.existsIn.delete(subscriptionHandle);
     if (docView.existsIn.size === 0) {
       // it is gone from everyone
-      self.callbacks.removed(self.collectionName, id);
+      // self.callbacks.removed(self.collectionName, id); freak2geek change
       self.documents.delete(id);
     } else {
       var changed = {};
@@ -1544,7 +1544,7 @@ Object.assign(Server.prototype, {
    */
   setPublicationStrategy(collectionName, strategy) {
     if (!Object.values(publicationStrategies).includes(strategy)) {
-      throw new Error(`Invalid merge strategy: ${strategy} 
+      throw new Error(`Invalid merge strategy: ${strategy}
         for collection ${collectionName}`);
     }
     this._publicationStrategies[collectionName] = strategy;
