@@ -44,7 +44,14 @@ const publicationStrategies = {
     useDummyDocumentView: true,
     useCollectionView: true,
     doAccountingForCollection: true
-  }
+  },
+
+  CUSTOM: { // freak2geek change. Based on SERVER_MERGE.
+    useDummyDocumentView: false,
+    useCollectionView: true,
+    doAccountingForCollection: true,
+    noSendRemoves: true, // Avoid sending back removes to the client
+  },
 };
 
 DDPServer.publicationStrategies = publicationStrategies;
@@ -191,6 +198,10 @@ Object.assign(Session.prototype, {
     return this._isSending || !this.server.getPublicationStrategy(collectionName).useCollectionView;
   },
 
+  _canSendRemove(collectionName) { // freak2geek change
+    return !this.server.getPublicationStrategy(collectionName).noSendRemoves;
+  },
+
 
   sendAdded(collectionName, id, fields) {
     if (this._canSend(collectionName)) {
@@ -213,8 +224,8 @@ Object.assign(Session.prototype, {
   },
 
   sendRemoved(collectionName, id) {
-    if (this._canSend(collectionName)) {
-      // this.send({msg: "removed", collection: collectionName, id}); // freak2geek change
+    if (this._canSend(collectionName) && this._canSendRemove(collectionName)) { // freak2geek change
+      this.send({msg: "removed", collection: collectionName, id});
     }
   },
 
@@ -1251,7 +1262,7 @@ Server = function (options = {}) {
     heartbeatTimeout: 15000,
     // For testing, allow responding to pings to be disabled.
     respondToPings: true,
-    defaultPublicationStrategy: publicationStrategies.SERVER_MERGE,
+    defaultPublicationStrategy: publicationStrategies.CUSTOM, // freak2geek change
     ...options,
   };
 
