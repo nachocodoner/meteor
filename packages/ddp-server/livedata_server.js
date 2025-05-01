@@ -214,7 +214,7 @@ Object.assign(Session.prototype, {
 
   sendRemoved(collectionName, id) {
     if (this._canSend(collectionName)) {
-      this.send({msg: "removed", collection: collectionName, id});
+      // this.send({msg: "removed", collection: collectionName, id}); // freak2geek change
     }
   },
 
@@ -759,7 +759,7 @@ Object.assign(Session.prototype, {
       var maybeSub = self._namedSubs.get(subId);
       if (maybeSub) {
         subName = maybeSub._name;
-        // maybeSub._removeAllDocuments(); freak2geek change
+        maybeSub._removeAllDocuments();
         maybeSub._deactivate();
         self._namedSubs.delete(subId);
       }
