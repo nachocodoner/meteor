@@ -2,6 +2,10 @@ import RandomGenerator from './AbstractRandomGenerator';
 
 // cryptographically strong PRNGs available in modern browsers
 export default class BrowserRandomGenerator extends RandomGenerator {
+  constructor(options = {}) {
+    super(options);
+  }
+
   /**
    * @name Random.fraction
    * @summary Return a number between 0 and 1, like `Math.random`.

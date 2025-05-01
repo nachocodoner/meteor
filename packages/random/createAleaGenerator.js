@@ -24,8 +24,9 @@ const width = (typeof window !== 'undefined' && window.innerWidth) ||
 
 const agent = (typeof navigator !== 'undefined' && navigator.userAgent) || '';
 
-export default function createAleaGenerator() {
+export default function createAleaGenerator(options = {}) {
   return new AleaRandomGenerator({
     seeds: [new Date, height, width, agent, Math.random()],
+    kuuid: options.kuuid,
   });
 }

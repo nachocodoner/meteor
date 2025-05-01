@@ -9,17 +9,19 @@ import BrowserRandomGenerator from './BrowserRandomGenerator';
 import createAleaGeneratorWithGeneratedSeed from './createAleaGenerator';
 import createRandom from './createRandom';
 
+// You can pass { kuuid: true } or { kuuid: false } to explicitly enable or disable kuuid
+// You can also pass { length: n } to set the default length for generated IDs
 let generator;
 if (typeof window !== 'undefined' && window.crypto &&
   window.crypto.getRandomValues) {
-  generator = new BrowserRandomGenerator();
+  generator = new BrowserRandomGenerator({ kuuid: undefined, length: undefined });
 } else {
   // On IE 10 and below, there's no browser crypto API
   // available. Fall back to Alea
   //
   // XXX looks like at the moment, we use Alea in IE 11 as well,
   // which has `window.msCrypto` instead of `window.crypto`.
-  generator = createAleaGeneratorWithGeneratedSeed();
+  generator = createAleaGeneratorWithGeneratedSeed({ kuuid: undefined, length: undefined });
 }
 
 

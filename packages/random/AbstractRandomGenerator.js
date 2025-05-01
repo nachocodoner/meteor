@@ -7,11 +7,34 @@
 // window.crypto.getRandomValues() or alea, the primitive is fraction and we use
 // that to construct hex string.
 
+// Check if kuuid is enabled either through environment variable or configuration option
+export function isKuuidEnabled(options) {
+  // Check if kuuid is explicitly enabled/disabled in options
+  if (options && options.kuuid !== undefined) {
+    return options.kuuid;
+  }
+  // Check if kuuid is enabled in Meteor.settings
+  if (Meteor.settings?.public?.packages?.random?.kuuid) {
+    return Meteor.settings.public.packages.random.kuuid;
+  }
+  return Meteor.isServer ? process.env.METEOR_PACKAGES_RANDOM_KUUID || false  : false;
+}
+
 import { Meteor } from 'meteor/meteor';
+import { id as prefixedId } from './kuuid';
+
 
 const UNMISTAKABLE_CHARS = '23456789ABCDEFGHJKLMNPQRSTWXYZabcdefghijkmnopqrstuvwxyz';
 const BASE64_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ' +
   '0123456789-_';
+
+var idCounter = 0;
+
+function uniqueId() {
+  if (idCounter === BASE64_CHARS.length) idCounter = 0;
+  var _id = ++idCounter;
+  return _id;
+}
 
 // `type` is one of `RandomGenerator.Type` as defined below.
 //
@@ -20,6 +43,12 @@ const BASE64_CHARS = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ' +
 //   whose items will be `toString`ed and used as the seed to the Alea
 //   algorithm
 export default class RandomGenerator {
+  constructor(options = {}) {
+    this.options = options;
+    // Check length in Meteor.settings as well
+    this.defaultLength = options.length || Meteor.settings?.public?.packages?.random?.length ||
+      (Meteor.isServer ? process.env.METEOR_PACKAGES_RANDOM_LENGTH : false) || 17; // Default length for IDs
+  }
 
   /**
    * @name Random.fraction
@@ -41,11 +70,24 @@ export default class RandomGenerator {
   }
 
   _randomString (charsCount, alphabet) {
-    let result = '';
-    for (let i = 0; i < charsCount; i++) {	
-      result += this.choice(alphabet);
+    let _charsCount = charsCount;
+    let prefix = '';
+    let uniqId = '';
+    if (isKuuidEnabled(this.options)) {
+      if (charsCount > 8) {
+        _charsCount = charsCount - 9;
+        prefix = prefixedId({ millisecond: true });
+        const _id = uniqueId();
+        const alphabetPos = _id % alphabet.length;
+        uniqId = alphabet.charAt(alphabetPos) + '';
+      }
     }
-    return result;
+
+    let _random = '';
+    for (let i = 0; i < _charsCount; i++) {
+      _random += this.choice(alphabet);
+    }
+    return prefix + uniqId + _random;
   }
 
   /**
@@ -60,7 +102,7 @@ export default class RandomGenerator {
     // 17 characters is around 96 bits of entropy, which is the amount of
     // state in the Alea PRNG.
     if (charsCount === undefined) {
-      charsCount = 17;
+      charsCount = this.defaultLength;
     }
 
     return this._randomString(charsCount, UNMISTAKABLE_CHARS);

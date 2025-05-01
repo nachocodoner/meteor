@@ -759,7 +759,7 @@ Object.assign(Session.prototype, {
       var maybeSub = self._namedSubs.get(subId);
       if (maybeSub) {
         subName = maybeSub._name;
-        maybeSub._removeAllDocuments();
+        // maybeSub._removeAllDocuments(); freak2geek change
         maybeSub._deactivate();
         self._namedSubs.delete(subId);
       }
@@ -1361,7 +1361,7 @@ Object.assign(Server.prototype, {
    */
   setPublicationStrategy(collectionName, strategy) {
     if (!Object.values(publicationStrategies).includes(strategy)) {
-      throw new Error(`Invalid merge strategy: ${strategy} 
+      throw new Error(`Invalid merge strategy: ${strategy}
         for collection ${collectionName}`);
     }
     this._publicationStrategies[collectionName] = strategy;

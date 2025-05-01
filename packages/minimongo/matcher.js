@@ -57,6 +57,7 @@ export default class Matcher {
   }
 
   documentMatches(doc) {
+    if (doc == null) return; // freak2geek change
     if (doc !== Object(doc)) {
       throw Error('documentMatches needs a document');
     }

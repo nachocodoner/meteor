@@ -8,17 +8,41 @@
 
 [//]: # (go to meteor/docs/generators/changelog/docs)
 
-## v3.0.1, 2024-07-16
+## v2.16.1, <date>
 
 ### Highlights
 
-* Bump the patch for some packages, so we publish them using Meteor 3 tooling. [PR](https://github.com/meteor/meteor/pull/13231)
+- Fix Cordova after the latest breaking change in common dependencies. [PR](https://github.com/meteor/meteor/pull/13620)
+
+#### Migration Steps
+
+To update from 2.16.0 to this one, you can run:
+
+```
+meteor update --release 2.16.1
+```
+
+If you're coming from an older version, please check our [Migration Guides](https://guide.meteor.com/2.14-migration).
 
 #### Breaking Changes
 
 N/A
 
-####  Internal API changes
+#### Internal API changes
+
+N/A
+
+#### Meteor Version Release
+
+* meteor-tool@2.16.1
+
+#### Independent releases
+
+N/A
+
+#### Contributors
+
+- [GH nachocodoner]
 
 N/A
 
