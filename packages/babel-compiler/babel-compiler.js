@@ -350,21 +350,29 @@ BCp.processOneFileForTarget = function (inputFile, source) {
     };
 
     var babelOptions = { filename };
-    try {
-      var result = (() => {
-        if (Meteor.isDevelopment && ['build/client.js', 'build/server.js'].includes(babelOptions.filename)) {
-          codeCompiledCache[babelOptions.filename] = codeCompiledCache[babelOptions.filename] || Babel.compile(source, babelOptions, cacheOptions);
-          let sourceMap = {};
-          try {
-            var mapData = fs.readFileSync(babelOptions.filename + '.map', 'utf8');
-            const json = JSON.parse(mapData);
-            sourceMap = { mappings: json.mappings, version: json.version };
-          } catch (e) {
-            // console.error('Error reading source map', e);
-          }
-          return { ...codeCompiledCache[babelOptions.filename], code: source, hash: toBeAdded.hash, ...sourceMap };
+
+    if (Meteor.isDevelopment && ['build/client.js', 'build/server.js'].includes(babelOptions.filename)) {
+      try {
+        // Get the full path to the file
+        const fullPath = inputFile.getPathInPackage();
+        // Read the file directly
+        toBeAdded.data = source;
+
+        // Try to read the corresponding map file
+        const mapPath = fullPath + '.map';
+        if (fs.existsSync(mapPath)) {
+          const mapContent = fs.readFileSync(mapPath, 'utf8');
+          toBeAdded.sourceMap = JSON.parse(mapContent);
         }
 
+        return toBeAdded;
+      } catch (e) {
+        console.error('Error reading source file:', e);
+      }
+    }
+
+    try {
+      var result = (() => {
         const isNodeModulesCode = packageName == null && inputFilePath.includes("node_modules/");
         const isAppCode = packageName == null && !isNodeModulesCode;
         const isPackageCode = packageName != null;
