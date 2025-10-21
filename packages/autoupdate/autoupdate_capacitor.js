@@ -13,7 +13,7 @@ const clientVersions = new ClientVersions();
 // Used by hot-module-replacement
 Autoupdate._clientVersions = clientVersions;
 
-Meteor.connection.registerStore(
+Meteor.connection.registerStoreClient(
   "meteor_autoupdate_clientVersions",
   clientVersions.createStore()
 );
