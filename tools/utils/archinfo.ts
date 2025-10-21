@@ -1,6 +1,7 @@
 import { max } from 'underscore';
 import os from 'os';
 const utils = require('./utils');
+import { getMeteorConfig } from '../tool-env/meteor-config.js';
 
 /* Meteor's current architecture scheme defines the following virtual
  * machine types, which are defined by specifying what is promised by
@@ -162,7 +163,7 @@ export function host() {
       const arch = run('uname', '-p');
 
       if ((arch !== "i386" && arch !== "arm") ||
-         run('sysctl', '-n', 'hw.cpu64bit_capable') !== "1") {
+        run('sysctl', '-n', 'hw.cpu64bit_capable') !== "1") {
         throw new Error("Only 64-bit Intel and M1 processors are supported on OS X");
       }
       if(arch === "arm"){
@@ -195,13 +196,13 @@ export function host() {
 export function acceptableMeteorToolArches(): string[] {
   if (os.platform() === "win32") {
     switch (utils.architecture()) {
-    case "x86_32":
-      return ["os.windows.x86_32"];
-    case "x86_64":
-      return [
-        "os.windows.x86_64",
-        "os.windows.x86_32",
-      ];
+      case "x86_32":
+        return ["os.windows.x86_32"];
+      case "x86_64":
+        return [
+          "os.windows.x86_64",
+          "os.windows.x86_32",
+        ];
     }
   }
 
@@ -232,36 +233,52 @@ export function canSwitchTo64Bit(): boolean {
 export function matches(host: string, program: string): boolean {
   return host.substr(0, program.length) === program &&
     (host.length === program.length ||
-     host.substr(program.length, 1) === ".");
+      host.substr(program.length, 1) === ".");
 }
 
-const legacyArches = [
-  "web.browser.legacy",
-  // It's important to include web.browser.legacy resources in the Cordova
-  // bundle, since Cordova bundles are built into the mobile application,
-  // rather than being downloaded from a web server at runtime. This means
-  // we can't distinguish between clients at runtime, so we have to use
-  // code that works for all clients.
-  "web.cordova",
-];
+
+function getLegacyArches(): string[] {
+  const arches = ["web.browser.legacy"];
+
+  // Check if cordova should use legacy mode
+  // This needs to access the meteor config at runtime
+  try {
+    const meteorConfig = getMeteorConfig();
+
+    if (meteorConfig?.cordova?.disableModern === true) {
+      arches.push("web.cordova");
+    }
+  } catch (e) {
+    // If config is not available, default to modern (don't add web.cordova)
+  }
+
+  return arches;
+}
 
 export function isLegacyArch(arch: string): boolean {
+  const legacyArches = getLegacyArches();
   return legacyArches.some(la => matches(arch, la));
 }
 
 export function mapWhereToArches(where: string) {
   const arches: string[] = [];
+  const legacyArches = getLegacyArches();
 
   // Shorthands for common arch prefixes:
   // "server" => os.*
   // "client" => web.*
-  // "legacy" => web.browser.legacy, web.cordova
+  // "modern" => web.browser, web.cordova (unless cordova.disableModern is set)
+  // "legacy" => web.browser.legacy, web.cordova (if cordova.disableModern is true)
   if (where === "server") {
     arches.push("os");
   } else if (where === "client") {
     arches.push("web");
   } else if (where === "modern") {
     arches.push("web.browser");
+    // Only add web.cordova to modern if it's not in legacy mode
+    if (!legacyArches.includes("web.cordova")) {
+      arches.push("web.cordova");
+    }
   } else if (where === "legacy") {
     arches.push(...legacyArches);
   } else {
