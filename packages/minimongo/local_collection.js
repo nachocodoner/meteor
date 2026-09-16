@@ -176,7 +176,7 @@ export default class LocalCollection {
     const queriesToRecompute = [];
 
     // trigger live queries that match
-    for (const qid of Object.keys(this.queries)) {
+    for (const qid in this.queries) {
       const query = this.queries[qid];
 
       if (query.dirty) {
@@ -745,7 +745,7 @@ export default class LocalCollection {
       for (const id of specificIds) {
         const doc = this._docs.get(id);
 
-        if (doc && !fn(doc, id)) {
+        if (doc && fn(doc, id) === false) {
           break
         }
       }
@@ -830,7 +830,7 @@ export default class LocalCollection {
     LocalCollection._modify(doc, mod, {arrayIndices});
 
     const recomputeQids = {};
-    for (const qid of Object.keys(this.queries)) {
+    for (const qid in this.queries) {
       const query = this.queries[qid];
 
       if (query.dirty) {
@@ -1723,7 +1723,7 @@ LocalCollection._removeFromResultsSync = (query, doc) => {
   } else {
     const id = doc._id;  // in case callback mutates doc
 
-    query.removed(doc._id);
+    query.removed(id);
     query.results.remove(id);
   }
 };
@@ -1737,7 +1737,7 @@ LocalCollection._removeFromResultsAsync = async (query, doc) => {
   } else {
     const id = doc._id;  // in case callback mutates doc
 
-    await query.removed(doc._id);
+    await query.removed(id);
     query.results.remove(id);
   }
 };
@@ -2296,11 +2296,12 @@ const NO_CREATE_MODIFIERS = {
 };
 
 // Make sure field names do not contain Mongo restricted
-// characters ('.', '$', '\0').
+// characters ('$', '\0') or invalid dot usage (leading/trailing/consecutive '.').
 // https://docs.mongodb.com/manual/reference/limits/#Restrictions-on-Field-Names
 const invalidCharMsg = {
   $: 'start with \'$\'',
-  '.': 'contain \'.\'',
+  '.': 'start or end with \'.\'',
+  '..': 'contain consecutive dots',
   '\0': 'contain null bytes'
 };
 
@@ -2316,7 +2317,7 @@ function assertHasValidFieldNames(doc) {
 
 function assertIsValidFieldName(key) {
   let match;
-  if (typeof key === 'string' && (match = key.match(/^\$|\.|\0/))) {
+  if (typeof key === 'string' && (match = key.match(/^\$|^\.|\.\.|\.$|^\.$|\0/))) {
     throw MinimongoError(`Key ${key} must not ${invalidCharMsg[match[0]]}`);
   }
 }

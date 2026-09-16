@@ -163,7 +163,7 @@ export function host() {
       const arch = run('uname', '-p');
 
       if ((arch !== "i386" && arch !== "arm") ||
-        run('sysctl', '-n', 'hw.cpu64bit_capable') !== "1") {
+         run('sysctl', '-n', 'hw.cpu64bit_capable') !== "1") {
         throw new Error("Only 64-bit Intel and M1 processors are supported on OS X");
       }
       if(arch === "arm"){
@@ -196,13 +196,13 @@ export function host() {
 export function acceptableMeteorToolArches(): string[] {
   if (os.platform() === "win32") {
     switch (utils.architecture()) {
-      case "x86_32":
-        return ["os.windows.x86_32"];
-      case "x86_64":
-        return [
-          "os.windows.x86_64",
-          "os.windows.x86_32",
-        ];
+    case "x86_32":
+      return ["os.windows.x86_32"];
+    case "x86_64":
+      return [
+        "os.windows.x86_64",
+        "os.windows.x86_32",
+      ];
     }
   }
 
@@ -233,25 +233,25 @@ export function canSwitchTo64Bit(): boolean {
 export function matches(host: string, program: string): boolean {
   return host.substr(0, program.length) === program &&
     (host.length === program.length ||
-      host.substr(program.length, 1) === ".");
+     host.substr(program.length, 1) === ".");
 }
 
 
 function getLegacyArches(): string[] {
   const arches = ["web.browser.legacy"];
-
+  
   // Check if cordova should use legacy mode
   // This needs to access the meteor config at runtime
   try {
     const meteorConfig = getMeteorConfig();
 
-    if (meteorConfig?.cordova?.disableModern === true) {
+    if (meteorConfig?.modern?.cordova === false) {
       arches.push("web.cordova");
     }
   } catch (e) {
     // If config is not available, default to modern (don't add web.cordova)
   }
-
+  
   return arches;
 }
 
@@ -267,8 +267,8 @@ export function mapWhereToArches(where: string) {
   // Shorthands for common arch prefixes:
   // "server" => os.*
   // "client" => web.*
-  // "modern" => web.browser, web.cordova (unless cordova.disableModern is set)
-  // "legacy" => web.browser.legacy, web.cordova (if cordova.disableModern is true)
+  // "modern" => web.browser, web.cordova (unless modern.cordova is set to false)
+  // "legacy" => web.browser.legacy, web.cordova (if modern.cordova is false)
   if (where === "server") {
     arches.push("os");
   } else if (where === "client") {

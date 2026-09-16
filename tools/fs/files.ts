@@ -359,13 +359,32 @@ export const rm_recursive = Profile("files.rm_recursive", async (path: string) =
 });
 
 export const rm_recursive_deferred = Profile("files.rm_recursive_deferred", async (path: string) => {
+  // If the path contains wildcards, we can't rename it.
+  // Delete it asynchronously, but wait for the glob to finish before the
+  // caller can create a new path that would also match it.
+  if (path.includes('*') || path.includes('?')) {
+    await rm_recursive_async(path).catch(e => {
+      console.error(`Error removing paths ${path}:`, e);
+    });
+    return;
+  }
+
   // Generate a temp path name for the old build directory
   const oldBuildPath = path + '.old-' + Math.floor(Math.random() * 999999);
   // If the original buildPath exists, rename it first
   if (exists(path)) {
-    await rename(path, oldBuildPath);
-    // Start deletion of old directory asynchronously without awaiting
-    rm_recursive(oldBuildPath).catch(e => {
+    try {
+      await rename(path, oldBuildPath);
+    } catch (error: any) {
+      if (error.code !== 'EXDEV') throw error;
+      // OverlayFS cannot rename directories inherited from an image layer.
+      // Complete the requested removal in place before its caller continues.
+      await rm_recursive(path);
+      return;
+    }
+    // Start deletion of old directory asynchronously without awaiting.
+    // Using rm_recursive_async so we don't block the event loop.
+    rm_recursive_async(oldBuildPath).catch(e => {
       // Log error but don't fail the build
       console.error(`Error removing old build directory ${oldBuildPath}:`, e);
     });

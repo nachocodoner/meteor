@@ -1,9 +1,10 @@
-const { MongoClient, MongoCompatibilityError } = Npm.require('mongodb');
+const { MongoClient } = Npm.require('mongodb');
 
 function connect(client) {
   return client.connect()
     .catch(error => {
-      if (error.cause instanceof MongoCompatibilityError && error.message.includes('maximum wire version')) {
+      // we just check the message since multiples errors can be catch this situation, e.g: instanceof MongoServerSelectionError or MongoCompatibilityError
+      if (error.message.includes('maximum wire version')) {
       console.warn(`[DEPRECATION] Legacy MongoDB version detected, using mongo-legacy package: ${error.message}
         Warning: MongoDB versions <= 3.6 are deprecated. Some Meteor features may not work properly with this version.
         It is recommended to use MongoDB >= 4.`);
@@ -15,18 +16,32 @@ function connect(client) {
   })
 }
 
+function redactMongoUrl(mongoUrl) {
+  return mongoUrl.replace(
+    /(mongodb(?:\+srv)?:\/\/)[\s\S]*@/,
+    '$1***:***@'
+  );
+}
+
 if (process.env.MONGO_URL && (/^mongodb(\+srv)?:\/\//.test(process.env.MONGO_URL))) {
   try {
-    connect(new MongoClient(process.env.MONGO_URL, {
-      tls: true,
-      tlsAllowInvalidCertificates: true,
-    })).then(client => {
+    // No TLS overrides here: the connection string carries its own TLS
+    // semantics (mongodb+srv implies TLS), and forcing tls with
+    // tlsAllowInvalidCertificates would both break plaintext deployments
+    // and skip certificate validation.
+    connect(new MongoClient(process.env.MONGO_URL)).then(client => {
       if (client) client.close();
     });
   } catch (e) {
-    console.warn('Invalid MongoDB connection string in MONGO_URL:', process.env.MONGO_URL);
+    // The URL may embed credentials (user:password@), so never log it raw.
+    // Redacts everything up to the final "@" — over-redacting a credential-less
+    // URL is fine here, leaking a password is not.
+    const redactedUrl = redactMongoUrl(process.env.MONGO_URL);
+    console.warn('Invalid MongoDB connection string in MONGO_URL:', redactedUrl);
   }
 }
+
+NpmMongoTest = { redactMongoUrl };
 
 const useLegacyMongo = !!Package['npm-mongo-legacy']
 const oldNoDeprecationValue = process.noDeprecation;
