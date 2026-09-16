@@ -109,7 +109,9 @@ export const ReplicationMethods = {
           self._collection.remove(mongoId);
         } else if (msg.msg === 'changed') {
           if (!doc) throw new Error('Expected to find a document to change');
-          const keys = Object.keys(msg.fields);
+          // DDP omits fields when there are none, including duplicate adds
+          // converted to changes for retained client documents.
+          const keys = Object.keys(msg.fields || {});
           if (keys.length > 0) {
             var modifier = {};
             keys.forEach(key => {
