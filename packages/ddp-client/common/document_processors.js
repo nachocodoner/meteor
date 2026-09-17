@@ -20,7 +20,13 @@ export class DocumentProcessors {
 
     if (serverDoc) {
       // Some outstanding stub wrote here.
-      const isExisting = serverDoc.document !== undefined;
+      // Custom no-removes publications can re-add retained documents. Merge
+      // their fields into the server snapshot without overwriting stub values
+      // in the local store; _process_updated applies it when all stubs settle.
+      if (serverDoc.document !== undefined && !self._resetStores) {
+        DiffSequence.applyChanges(serverDoc.document, msg.fields || Object.create(null));
+        return;
+      }
 
       serverDoc.document = msg.fields || Object.create(null);
       serverDoc.document._id = id;
@@ -34,8 +40,6 @@ export class DocumentProcessors {
         if (currentDoc !== undefined) msg.fields = currentDoc;
 
         self._pushUpdate(updates, msg.collection, msg);
-      } else if (isExisting) {
-        throw new Error('Server sent add for existing id: ' + msg.id);
       }
     } else {
       self._pushUpdate(updates, msg.collection, msg);
