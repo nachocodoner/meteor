@@ -169,6 +169,17 @@ export class DocumentProcessors {
       // currently buffered messages are flushed.
       const callbackInvoker = self._methodInvokers[methodId];
       if (!callbackInvoker) {
+        const numericMethodId = Number(methodId);
+        if (
+          isEmpty(docs) &&
+          Number.isSafeInteger(numericMethodId) &&
+          numericMethodId > 0 &&
+          numericMethodId <= self._abandonedNoRetryMethodHighWatermark
+        ) {
+          // A completed noRetry method can deliver a late duplicate updated
+          // frame after its bounded tombstone has been evicted.
+          return;
+        }
         throw new Error('No callback invoker for method ' + methodId);
       }
 

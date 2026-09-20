@@ -17,6 +17,7 @@ export class MethodInvoker {
     this.noRetry = options.noRetry;
     this._methodResult = null;
     this._dataVisible = false;
+    this._abandonedOnReset = false;
 
     // Register with the connection.
     this._connection._methodInvokers[this.methodId] = this;
@@ -56,7 +57,11 @@ export class MethodInvoker {
 
       // Let the connection know that this method is finished, so it can try to
       // move on to the next block of methods.
-      this._connection._outstandingMethodFinished();
+      if (this._abandonedOnReset) {
+        this._connection._maybeMigrate();
+      } else {
+        this._connection._outstandingMethodFinished();
+      }
     }
   }
   // Call with the result of the method from the server. Only may be called

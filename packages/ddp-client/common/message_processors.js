@@ -52,6 +52,8 @@ export class MessageProcessors {
     // Reset the received count since we're starting a new session.
     // Set to 1 because the 'connected' message itself counts.
     self._receivedCount = 1;
+    self._abandonedNoRetryMethods.clear();
+    self._abandonedNoRetryMethodHighWatermark = 0;
 
     // Forget about messages we were buffering for unknown collections. They'll
     // be resent if still relevant.
@@ -132,6 +134,18 @@ export class MessageProcessors {
    */
   async _livedata_data(msg) {
     const self = this._connection;
+
+    if (msg.msg === 'updated') {
+      const methods = msg.methods.filter(methodId => {
+        const abandoned = self._abandonedNoRetryMethods.get(methodId);
+        if (!abandoned) return true;
+        abandoned.updated = true;
+        if (abandoned.result) self._abandonedNoRetryMethods.delete(methodId);
+        return false;
+      });
+      if (methods.length === 0) return;
+      if (methods.length !== msg.methods.length) msg = { ...msg, methods };
+    }
 
     if (self._waitingForQuiescence()) {
       self._messagesBufferedUntilQuiescence.push(msg);
@@ -246,6 +260,24 @@ export class MessageProcessors {
     // Lets make sure there are no buffered writes before returning result.
     if (!isEmpty(self._bufferedWrites)) {
       await self._flushBufferedWrites();
+    }
+
+    // noRetry methods are failed locally on disconnect, but a resumed server
+    // session can still finish the original invocation and replay its result.
+    const abandoned = self._abandonedNoRetryMethods.get(msg.id);
+    if (abandoned) {
+      abandoned.result = true;
+      if (abandoned.updated) self._abandonedNoRetryMethods.delete(msg.id);
+      return;
+    }
+    const numericMethodId = Number(msg.id);
+    if (
+      !self._methodInvokers[msg.id] &&
+      Number.isSafeInteger(numericMethodId) &&
+      numericMethodId > 0 &&
+      numericMethodId <= self._abandonedNoRetryMethodHighWatermark
+    ) {
+      return;
     }
 
     // find the outstanding request

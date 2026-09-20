@@ -113,6 +113,11 @@ export class Connection {
     // of their writes to be written to the local cache). Map from method ID to
     // MethodInvoker object.
     self._methodInvokers = Object.create(null);
+    // A resumed session can still deliver the result of a sent noRetry method
+    // after the client has failed that invocation locally on disconnect.
+    self._abandonedNoRetryMethods = new Map();
+    self._abandonedNoRetryMethodLimit = 1000;
+    self._abandonedNoRetryMethodHighWatermark = 0;
 
     // Tracks methods which the user has called but whose result messages have not
     // arrived yet.

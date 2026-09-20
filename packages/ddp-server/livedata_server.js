@@ -91,6 +91,12 @@ var Session = function (server, version, socket, options) {
   // how many messages we've actually sent (not queued to send) excluding ping/pong
   // we'll use this to detect mismatch of data on reconnect.
   self.sentCount = 0;
+  self.messageHistory = [];
+  self.messageHistoryBytes = 0;
+  self.pendingReplayMessages = [];
+  self._inFlightMethodIds = new Set();
+  self._queuedMethodCounts = new Map();
+  self._methodIdsToIgnoreOnResume = new Set();
 
   self.server = server;
   self.version = version;
@@ -368,6 +374,60 @@ Object.assign(Session.prototype, {
     });
   },
 
+  _sendSerialized: function (stringMsg, messageType, messageId) {
+    const self = this;
+    if (Meteor._printSentDDP) {
+      Meteor._debug("Sent DDP", stringMsg);
+    }
+    self.socket.send(stringMsg);
+
+    self.sentCount++;
+    const byteLength = Buffer.byteLength(stringMsg, "utf8");
+    self.messageHistory.push({
+      count: self.sentCount,
+      messageType,
+      messageId,
+      stringMsg,
+      byteLength,
+    });
+    self.messageHistoryBytes += byteLength;
+    while (
+      self.messageHistory.length > self.options.maxMessageQueueLength ||
+      self.messageHistoryBytes > self.options.maxMessageHistoryBytes
+    ) {
+      const removedMessage = self.messageHistory.shift();
+      self.messageHistoryBytes -= removedMessage.byteLength;
+    }
+  },
+
+  _messagesSince: function (receivedCount) {
+    const self = this;
+    if (
+      !Number.isSafeInteger(receivedCount) ||
+      receivedCount < 0 ||
+      receivedCount > self.sentCount
+    ) {
+      return null;
+    }
+    if (receivedCount === self.sentCount) {
+      return [];
+    }
+
+    const messages = self.messageHistory.filter(
+      ({ count }) => count > receivedCount
+    );
+    const expectedLength = self.sentCount - receivedCount;
+    if (
+      messages.length !== expectedLength ||
+      messages.some(
+        ({ count }, index) => count !== receivedCount + index + 1
+      )
+    ) {
+      return null;
+    }
+    return messages;
+  },
+
   // Send a message (doing nothing if no socket is connected right now).
   // It should be a JSON object (it will be stringified).
   send: function (msg) {
@@ -383,12 +443,14 @@ Object.assign(Session.prototype, {
     }
     if (self.socket) {
       const stringMsg = DDPCommon.stringifyDDP(msg);
-      if (Meteor._printSentDDP)
-        Meteor._debug("Sent DDP", stringMsg);
-      if (!isIgnoredMsg) {
-        self.sentCount++;
+      if (isIgnoredMsg) {
+        if (Meteor._printSentDDP) {
+          Meteor._debug("Sent DDP", stringMsg);
+        }
+        self.socket.send(stringMsg);
+        return;
       }
-      self.socket.send(stringMsg);
+      self._sendSerialized(stringMsg, msg.msg, msg.id);
     }
   },
 
@@ -453,6 +515,12 @@ Object.assign(Session.prototype, {
     }
 
     self.inQueue.push(msg_in);
+    if (msg_in.msg === 'method' && typeof msg_in.id === 'string') {
+      self._queuedMethodCounts.set(
+        msg_in.id,
+        (self._queuedMethodCounts.get(msg_in.id) || 0) + 1
+      );
+    }
     if (self.workerRunning)
       return;
     self.workerRunning = true;
@@ -463,6 +531,14 @@ Object.assign(Session.prototype, {
       if (!msg) {
         self.workerRunning = false;
         return;
+      }
+      if (msg.msg === 'method' && typeof msg.id === 'string') {
+        const queuedMethodCount = self._queuedMethodCounts.get(msg.id) || 0;
+        if (queuedMethodCount > 1) {
+          self._queuedMethodCounts.set(msg.id, queuedMethodCount - 1);
+        } else {
+          self._queuedMethodCounts.delete(msg.id);
+        }
       }
 
       function runHandlers() {
@@ -594,6 +670,19 @@ Object.assign(Session.prototype, {
         return;
       }
 
+      // A resumed client retries outstanding methods because it cannot know
+      // whether the previous transport delivered the invocation. Ignore only
+      // IDs that this logical session knows were already running or completed.
+      if (self._methodIdsToIgnoreOnResume.has(msg.id)) {
+        if (!self._queuedMethodCounts.has(msg.id)) {
+          self._methodIdsToIgnoreOnResume.delete(msg.id);
+        }
+        return;
+      }
+      if (self._queuedMethodCounts.has(msg.id)) {
+        self._methodIdsToIgnoreOnResume.add(msg.id);
+      }
+
       var randomSeed = msg.randomSeed || null;
 
       // Set up to mark the method as satisfied once all observers
@@ -619,6 +708,8 @@ Object.assign(Session.prototype, {
         await fence.arm();
         return;
       }
+
+      self._inFlightMethodIds.add(msg.id);
 
       var invocation = new DDPCommon.MethodInvocation({
         name: msg.method,
@@ -710,7 +801,9 @@ Object.assign(Session.prototype, {
           });
         }
         self.send(payload);
-      };
+      } finally {
+        self._inFlightMethodIds.delete(msg.id);
+      }
     }
   },
 
@@ -1387,6 +1480,12 @@ Server = function (options = {}) {
      */
     maxMessageQueueLength: 100,
     /**
+     * @summary Maximum serialized size of the outgoing message history retained for session resumption.
+     * @type {Number}
+     * @locus Server
+     */
+    maxMessageHistoryBytes: 1024 * 1024,
+    /**
      * @summary How long we should maintain a session for after a non-graceful disconnect before killing it
      *          sessions that reconnect within this time will be resumed with minimal performance impact.
      * @type {Number}
@@ -1566,22 +1665,65 @@ Object.assign(Server.prototype, {
     // Note: Troposphere depends on the ability to mutate
     // Meteor.server.options.heartbeatTimeout! This is a hack, but it's life.
     const existingSession = self.sessions.get(msg.session);
+    const messagesToReplay = existingSession?._messagesSince(msg.receivedCount);
+    const resumptionEnabled = self.options.disconnectGracePeriod > 0;
 
     // we've found a session with:
     // the right ID
-    // a matching sent/received count
-    // was disconnected and hasn't been reconnected to yet.
-    if (existingSession && existingSession.sentCount === msg.receivedCount &&
-        existingSession._removeTimeoutHandle && !existingSession._expectingDisconnect) {
-      Meteor.clearTimeout(existingSession._removeTimeoutHandle);
+    // the same negotiated DDP version
+    // a received count that is current or can be replayed from history
+    // was disconnected or still owns the socket being replaced.
+    if (resumptionEnabled &&
+        existingSession && existingSession.version === version &&
+        messagesToReplay !== null &&
+        !existingSession._expectingDisconnect &&
+        (existingSession._removeTimeoutHandle || existingSession.socket)) {
+      const previousSocket = existingSession.socket;
+      if (previousSocket && previousSocket !== socket) {
+        // Move ownership before closing the previous transport. Its delayed
+        // close event must not detach the replacement socket.
+        previousSocket._meteorSession = null;
+      }
+      existingSession._stopHeartbeat();
+      if (existingSession._removeTimeoutHandle) {
+        Meteor.clearTimeout(existingSession._removeTimeoutHandle);
+      }
       existingSession._removeTimeoutHandle = undefined;
       existingSession._pendingRemoveFunction = undefined;
       existingSession._isClosing = false; // Reset so session can be closed again later
       existingSession._expectingDisconnect = undefined;
       socket._meteorSession = existingSession;
-      const messageQueue = existingSession.messageQueue;
+      const messageQueue = existingSession.messageQueue || [];
       existingSession.messageQueue = undefined;
       existingSession.socket = socket;
+
+      // Rebase the server count on what the client confirmed receiving.
+      // A fresh connected frame replaces any unreceived connected frames;
+      // application frames are then sent again in their original order.
+      existingSession.sentCount = msg.receivedCount;
+      existingSession.messageHistory = existingSession.messageHistory.filter(
+        ({ count }) => count <= msg.receivedCount
+      );
+      existingSession.messageHistoryBytes = existingSession.messageHistory.reduce(
+        (total, { byteLength }) => total + byteLength,
+        0
+      );
+      const queuedMethodIdsToIgnore = [
+        ...existingSession._methodIdsToIgnoreOnResume,
+      ].filter((methodId) => existingSession._queuedMethodCounts.has(methodId));
+      existingSession._methodIdsToIgnoreOnResume = new Set([
+        ...queuedMethodIdsToIgnore,
+        ...existingSession._inFlightMethodIds,
+      ]);
+      existingSession.pendingReplayMessages = [
+        ...messagesToReplay.filter(
+          ({ messageType }) => messageType !== 'connected'
+        ),
+        ...existingSession.pendingReplayMessages,
+      ];
+      if (previousSocket && previousSocket !== socket && !previousSocket.isClosed) {
+        previousSocket.close();
+      }
 
       // Restart heartbeat for the resumed session
       if (existingSession.version !== 'pre1' && self.options.heartbeatInterval !== 0) {
@@ -1599,23 +1741,45 @@ Object.assign(Server.prototype, {
         existingSession.heartbeat.start();
       }
 
-      // Send connected message so client can restart heartbeat and confirm resumption
-      existingSession.send({ msg: 'connected', session: existingSession.id });
-      // Flush the messages buffered during the grace period synchronously,
-      // before anything else (e.g. a live observe callback) can send on the
-      // reattached socket — deferring the flush would let newer messages
-      // jump ahead of older buffered ones and break DDP's ordering.
-      if (messageQueue) {
-        messageQueue.forEach(msg => existingSession.send(msg));
+      try {
+        // Send connected first so client state is ready before replayed data.
+        existingSession.send({ msg: 'connected', session: existingSession.id });
+        while (existingSession.pendingReplayMessages.length > 0) {
+          const { stringMsg, messageType, messageId } =
+            existingSession.pendingReplayMessages[0];
+          existingSession._sendSerialized(stringMsg, messageType, messageId);
+          if (messageType === 'result') {
+            existingSession._methodIdsToIgnoreOnResume.add(messageId);
+          }
+          existingSession.pendingReplayMessages.shift();
+        }
+        // Flush the messages buffered during the grace period synchronously,
+        // before anything else (e.g. a live observe callback) can send on the
+        // reattached socket — deferring the flush would let newer messages
+        // jump ahead of older buffered ones and break DDP's ordering.
+        while (messageQueue.length > 0) {
+          const queuedMessage = messageQueue[0];
+          existingSession.send(queuedMessage);
+          if (queuedMessage.msg === 'result') {
+            existingSession._methodIdsToIgnoreOnResume.add(queuedMessage.id);
+          }
+          messageQueue.shift();
+        }
+      } catch (error) {
+        // Preserve anything the replacement transport did not accept. Frames
+        // accepted before the failure remain in messageHistory and are replayed
+        // according to the next receivedCount.
+        existingSession.close();
+        existingSession.messageQueue = messageQueue;
+        throw error;
       }
       // Note: onConnectionHook is NOT called on session resume - the connection
       // is considered to be the same logical connection as before.
     }
     else {
       // immediately remove the old session since we're out of date.
-      if (existingSession && existingSession._pendingRemoveFunction) {
-        Meteor.clearTimeout(existingSession._removeTimeoutHandle);
-        existingSession._pendingRemoveFunction();
+      if (existingSession) {
+        existingSession.connectionHandle.close();
       }
       socket._meteorSession = new Session(self, version, socket, self.options);
       self.sessions.set(socket._meteorSession.id, socket._meteorSession);

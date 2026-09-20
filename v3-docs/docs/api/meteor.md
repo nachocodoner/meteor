@@ -1038,6 +1038,9 @@ Meteor.server.options.disconnectGracePeriod = 30000;
 
 // Queue up to 500 messages per disconnected session
 Meteor.server.options.maxMessageQueueLength = 500;
+
+// Retain up to 4 MiB of serialized outgoing frames for replay
+Meteor.server.options.maxMessageHistoryBytes = 4 * 1024 * 1024;
 ```
 
 ### Meteor.server.options.disconnectGracePeriod
@@ -1047,6 +1050,10 @@ Defines how long (in milliseconds) we should maintain a session for after a non-
 ### Meteor.server.options.maxMessageQueueLength
 
 Determines how many messages we should queue during a non-graceful disconnect before we destroy the session, to help prevent memory leaks. Defaults to `100`.
+
+### Meteor.server.options.maxMessageHistoryBytes
+
+Determines how many serialized bytes of recently sent DDP frames a session may retain for reconnection replay. The history is also bounded by `maxMessageQueueLength`. If the client reports a `receivedCount` older than the retained history, the server creates a fresh session instead of replaying an incomplete suffix. Defaults to `1048576` (1 MiB).
 
 ### Resume Behavior and Edge Cases
 

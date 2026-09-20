@@ -79,7 +79,7 @@ Meteor 3.5 introduced DDP session resumption: when a client reconnects within a 
 
 #### Enabling and tuning
 
-Session resumption is on by default. You can tune its two parameters in server startup code:
+Session resumption is on by default. You can tune its parameters in server startup code:
 
 ```js
 import { Meteor } from 'meteor/meteor';
@@ -89,19 +89,23 @@ Meteor.server.options.disconnectGracePeriod = 30000;
 
 // Queue up to 500 messages per disconnected session (default: 100)
 Meteor.server.options.maxMessageQueueLength = 500;
+
+// Retain up to 4 MiB of serialized outgoing frames for replay (default: 1 MiB)
+Meteor.server.options.maxMessageHistoryBytes = 4 * 1024 * 1024;
 ```
 
 | Option | Default | Effect |
 |--------|---------|--------|
 | `disconnectGracePeriod` | `15000` ms | How long a disconnected session is held before being destroyed |
 | `maxMessageQueueLength` | `100` | Max messages queued per session; session is discarded if exceeded |
+| `maxMessageHistoryBytes` | `1048576` | Max serialized bytes retained per session for replaying frames that a reconnect has not confirmed |
 
 To disable resumption entirely set `disconnectGracePeriod` to `0`.
 
 #### Things to know before enabling a longer grace period
 
 - **Load balancers:** The client must reconnect to the *same* physical Meteor instance. Make sure sticky sessions (or IP hash) are configured in your load balancer.
-- **Memory:** Each queued message and live subscription cursor is held in memory for the duration of the grace period. Large `maxMessageQueueLength` values on high-traffic servers can increase memory pressure.
+- **Memory:** Each queued message and live subscription cursor is held in memory for the duration of the grace period. Recently sent frames are also retained within both `maxMessageQueueLength` and `maxMessageHistoryBytes`. If a reconnect needs a frame older than either bound, Meteor creates a fresh session rather than attempting a partial replay.
 - **`onConnection` is not called on resume:** If you track presence with `onConnection`/`onClose`, see the [presence tracking pattern](/api/meteor#reconnection) in the API reference.
 - **Hot Code Push is unaffected:** HCP is a graceful disconnect and always initiates a fresh session so clients pick up the new code.
 

@@ -995,6 +995,8 @@ if (Meteor.isClient) {
     testGotMessage(test, stream, makeConnectMessage(SESSION_ID, conn._receivedCount));
     // Make sure that the stream triggers connection.
     await stream.receive({ msg: 'connected', session: SESSION_ID + 1 });
+    test.equal(conn._abandonedNoRetryMethods.size, 0,
+      'a replacement session should discard abandoned noRetry ids');
 
     //The method callback should fire even though the stream has not sent a response.
     //the callback should have been fired with an error.
@@ -1005,6 +1007,196 @@ if (Meteor.isClient) {
 
     // verify that the method message was not sent.
     test.isUndefined(stream.sent.shift());
+  });
+
+  Tinytest.addAsync('livedata stub - resumed session ignores abandoned noRetry result', async function (
+    test
+  ) {
+    const stream = new StubStream();
+    const conn = newConnection(stream);
+    await startAndConnect(test, stream);
+
+    let resultCalls = 0;
+    let callbackCalls = 0;
+    conn.apply('do_something', [], {
+      noRetry: true,
+      onResultReceived(error) {
+        resultCalls += 1;
+        test.equal(error?.error, 'invocation-failed');
+      },
+    }, function (error) {
+      callbackCalls += 1;
+      test.equal(error?.error, 'invocation-failed');
+    });
+    const method = JSON.parse(stream.sent.shift());
+
+    await stream.reset();
+    testGotMessage(test, stream, makeConnectMessage(SESSION_ID, conn._receivedCount));
+    test.isTrue(conn._abandonedNoRetryMethods.has(method.id));
+    test.equal(resultCalls, 1);
+    test.equal(callbackCalls, 1, 'disconnect should complete the abandoned invocation locally');
+    test.isUndefined(conn._methodInvokers[method.id]);
+
+    await stream.receive({ msg: 'connected', session: SESSION_ID });
+    await stream.receive({ msg: 'updated', methods: [method.id] });
+    await stream.receive({ msg: 'result', id: method.id, result: 'late' });
+
+    test.equal(resultCalls, 1, 'the late server result should not settle the invocation twice');
+    test.equal(callbackCalls, 1, 'the user callback should run once');
+    test.isFalse(conn._abandonedNoRetryMethods.has(method.id));
+    test.isUndefined(conn._methodInvokers[method.id]);
+  });
+
+  Tinytest.addAsync('livedata stub - noRetry updated before reset accepts its late result', async function (
+    test
+  ) {
+    const stream = new StubStream();
+    const conn = newConnection(stream);
+    await startAndConnect(test, stream);
+
+    let callbackCalls = 0;
+    conn.apply('updated_first', [], { noRetry: true }, error => {
+      callbackCalls += 1;
+      test.equal(error?.error, 'invocation-failed');
+    });
+    const method = JSON.parse(stream.sent.shift());
+    await stream.receive({ msg: 'updated', methods: [method.id] });
+
+    await stream.reset();
+    testGotMessage(test, stream, makeConnectMessage(SESSION_ID, conn._receivedCount));
+    test.equal(callbackCalls, 1);
+    test.isUndefined(conn._methodInvokers[method.id]);
+    await stream.receive({ msg: 'connected', session: SESSION_ID });
+    await stream.receive({ msg: 'result', id: method.id, result: 'late' });
+    test.isFalse(conn._abandonedNoRetryMethods.has(method.id));
+  });
+
+  Tinytest.addAsync('livedata stub - abandoned noRetry wait preserves reconnect ordering', async function (
+    test
+  ) {
+    const stream = new StubStream();
+    const conn = newConnection(stream);
+    await startAndConnect(test, stream);
+
+    conn.apply('abandoned_wait', [], { noRetry: true, wait: true }, () => {});
+    const abandoned = JSON.parse(stream.sent.shift());
+    conn.apply('after_wait', [], () => {});
+    test.equal(stream.sent.length, 0);
+    conn.onReconnect = () => {
+      conn.apply('from_reconnect', [], () => {});
+    };
+
+    await stream.reset();
+    testGotMessage(test, stream, makeConnectMessage(SESSION_ID, conn._receivedCount));
+    const resentMethods = stream.sent.map(message => JSON.parse(message));
+    test.equal(
+      resentMethods.map(message => message.method),
+      ['from_reconnect', 'after_wait'],
+      'reconnect methods should precede each following method exactly once'
+    );
+    test.isTrue(conn._abandonedNoRetryMethods.has(abandoned.id));
+    await stream.receive({ msg: 'connected', session: SESSION_ID });
+    test.isFalse(conn._waitingForQuiescence());
+    await stream.receive({
+      msg: 'added',
+      collection: 'after-wait',
+      id: 'document',
+      fields: { value: 1 },
+    });
+    test.equal(conn._messagesBufferedUntilQuiescence.length, 0);
+    test.equal(conn._updatesForUnknownStores['after-wait'].length, 1);
+  });
+
+  Tinytest.addAsync('livedata stub - abandoned noRetry callback sends after connect once', async function (
+    test
+  ) {
+    const stream = new StubStream();
+    const conn = newConnection(stream);
+    await startAndConnect(test, stream);
+
+    conn.apply('abandoned_callback', [], { noRetry: true }, () => {
+      conn.apply('from_callback', [], () => {});
+    });
+    stream.sent.shift();
+    await stream.reset();
+    const sent = stream.sent.map(message => JSON.parse(message));
+    test.equal(sent[0], makeConnectMessage(SESSION_ID, conn._receivedCount));
+    test.equal(
+      sent.filter(message => message.msg === 'method').map(message => message.method),
+      ['from_callback']
+    );
+  });
+
+  Tinytest.addAsync('livedata stub - lost noRetry rolls back optimistic writes', async function (
+    test
+  ) {
+    const stream = new StubStream();
+    const conn = newConnection(stream);
+    await startAndConnect(test, stream);
+    const collectionName = Random.id();
+    const collection = new Mongo.Collection(collectionName, { connection: conn });
+    await collection._settingUpReplicationPromise;
+    await stream.receive({
+      msg: 'added',
+      collection: collectionName,
+      id: 'document',
+      fields: { value: 1 },
+    });
+    conn.methods({
+      async optimistic_update() {
+        await collection.updateAsync('document', { $set: { value: 2 } }).stubPromise;
+      },
+    });
+
+    const pending = conn.applyAsync('optimistic_update', [], {
+      noRetry: true,
+      returnServerResultPromise: true,
+    });
+    await pending.stubPromise;
+    const method = JSON.parse(stream.sent.shift());
+    test.equal((await collection.findOneAsync('document')).value, 2);
+
+    await stream.reset();
+    testGotMessage(test, stream, makeConnectMessage(SESSION_ID, conn._receivedCount));
+    const error = await pending.catch(failure => failure);
+    test.equal(error?.error, 'invocation-failed');
+    test.equal((await collection.findOneAsync('document')).value, 1);
+    test.isUndefined(conn._methodInvokers[method.id]);
+    test.isUndefined(conn._documentsWrittenByStub[method.id]);
+    test.isNull(conn._getServerDoc(collectionName, 'document'));
+  });
+
+  Tinytest.addAsync('livedata stub - lost noRetry invocation settles and tracking stays bounded', async function (
+    test
+  ) {
+    const stream = new StubStream();
+    const conn = newConnection(stream);
+    conn._abandonedNoRetryMethodLimit = 1;
+    await startAndConnect(test, stream);
+
+    const abandon = async methodName => {
+      let callbackCalls = 0;
+      conn.apply(methodName, [], { noRetry: true }, error => {
+        callbackCalls += 1;
+        test.equal(error?.error, 'invocation-failed');
+      });
+      const method = JSON.parse(stream.sent.shift());
+      await stream.reset();
+      testGotMessage(test, stream, makeConnectMessage(SESSION_ID, conn._receivedCount));
+      test.equal(callbackCalls, 1);
+      test.isUndefined(conn._methodInvokers[method.id]);
+      await stream.receive({ msg: 'connected', session: SESSION_ID });
+      return method.id;
+    };
+
+    const firstId = await abandon('lost_once');
+    test.isTrue(conn._abandonedNoRetryMethods.has(firstId));
+    const secondId = await abandon('lost_twice');
+    test.equal(conn._abandonedNoRetryMethods.size, 1);
+    test.isFalse(conn._abandonedNoRetryMethods.has(firstId));
+    test.isTrue(conn._abandonedNoRetryMethods.has(secondId));
+    await stream.receive({ msg: 'updated', methods: [firstId] });
+    await stream.receive({ msg: 'result', id: firstId, result: 'late' });
   });
 }
 

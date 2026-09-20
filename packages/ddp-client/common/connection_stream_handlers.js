@@ -122,13 +122,15 @@ export class ConnectionStreamHandlers {
    * Handles connection reset events
    */
   onReset() {
+    // Prepare abandoned noRetry calls before the replacement transport can
+    // deliver connected/replay frames. Local callbacks are finished only
+    // after connect and reconnect orchestration own the outgoing queue.
+    const finishAbandonedMethods = this._handleOutstandingMethodsOnReset();
+
     // Reset is called even on the first connection, so this is
     // the only place we send this message.
     const msg = this._buildConnectMessage();
     this._connection._send(msg);
-
-    // Mark non-retry calls as failed and handle outstanding methods
-    this._handleOutstandingMethodsOnReset();
 
     // Now, to minimize setup latency, go ahead and blast out all of
     // our pending methods ands subscriptions before we've even taken
@@ -139,6 +141,14 @@ export class ConnectionStreamHandlers {
     // Deliver messages that were passed to _sendQueued while disconnected
     // (e.g. 'unsub' messages); the stream would have dropped them.
     this._connection._flushMessagesQueuedUntilReconnect();
+
+    try {
+      finishAbandonedMethods?.()?.catch(error => {
+        Meteor._debug('Failed to reconcile an abandoned noRetry method', error);
+      });
+    } catch (error) {
+      Meteor._debug('Failed to reconcile an abandoned noRetry method', error);
+    }
   }
 
   /**
@@ -166,27 +176,49 @@ export class ConnectionStreamHandlers {
     const blocks = this._connection._outstandingMethodBlocks;
     if (blocks.length === 0) return;
 
+    const abandonedInvokers = [];
+    const methodsNeedingLocalUpdate = [];
     const currentMethodBlock = blocks[0].methods;
-    blocks[0].methods = currentMethodBlock.filter(
-      methodInvoker => {
-        // Methods with 'noRetry' option set are not allowed to re-send after
-        // recovering dropped connection.
-        if (methodInvoker.sentMessage && methodInvoker.noRetry) {
-          methodInvoker.receiveResult(
-            new Meteor.Error(
-              'invocation-failed',
-              'Method invocation might have failed due to dropped connection. ' +
-              'Failing because `noRetry` option was passed to Meteor.apply.'
-            )
-          );
-        }
+    blocks[0].methods = currentMethodBlock.filter(methodInvoker => {
+      const abandoned = methodInvoker.sentMessage && methodInvoker.noRetry;
+      if (abandoned) abandonedInvokers.push(methodInvoker);
+      return !abandoned;
+    });
 
-        // Only keep a method if it wasn't sent or it's allowed to retry.
-        return !(methodInvoker.sentMessage && methodInvoker.noRetry);
+    // Remove abandoned invokers from their block before delivering the local
+    // error. receiveResult can complete synchronously when updated arrived
+    // before the transport reset.
+    abandonedInvokers.forEach(methodInvoker => {
+      this._connection._abandonedNoRetryMethods.set(methodInvoker.methodId, {
+        result: false,
+        updated: methodInvoker._dataVisible,
+      });
+      const numericMethodId = Number(methodInvoker.methodId);
+      if (Number.isSafeInteger(numericMethodId)) {
+        this._connection._abandonedNoRetryMethodHighWatermark = Math.max(
+          this._connection._abandonedNoRetryMethodHighWatermark,
+          numericMethodId
+        );
       }
-    );
+      methodInvoker._abandonedOnReset = true;
+      if (!methodInvoker._dataVisible) {
+        methodsNeedingLocalUpdate.push(methodInvoker.methodId);
+      }
+      delete this._connection._methodsBlockingQuiescence[methodInvoker.methodId];
+    });
 
-    // Clear empty blocks
+    if (abandonedInvokers.length > 0) {
+      while (
+        this._connection._abandonedNoRetryMethods.size >
+        this._connection._abandonedNoRetryMethodLimit
+      ) {
+        const oldestMethodId = this._connection._abandonedNoRetryMethods.keys().next().value;
+        this._connection._abandonedNoRetryMethods.delete(oldestMethodId);
+      }
+    }
+
+    // Removing abandoned invokers before delivering their local error keeps
+    // callback completion from observing a nonempty block with no invokers.
     if (blocks.length > 0 && blocks[0].methods.length === 0) {
       blocks.shift();
     }
@@ -195,6 +227,25 @@ export class ConnectionStreamHandlers {
     Object.values(this._connection._methodInvokers).forEach(invoker => {
       invoker.sentMessage = false;
     });
+
+    if (abandonedInvokers.length === 0) return;
+    return () => {
+      abandonedInvokers.forEach(methodInvoker => {
+        methodInvoker.receiveResult(
+          new Meteor.Error(
+            'invocation-failed',
+            'Method invocation might have failed due to dropped connection. ' +
+            'Failing because `noRetry` option was passed to Meteor.apply.'
+          )
+        );
+      });
+      if (methodsNeedingLocalUpdate.length === 0) return;
+      this._connection._process_updated(
+        { msg: 'updated', methods: methodsNeedingLocalUpdate },
+        this._connection._bufferedWrites
+      );
+      return this._connection._flushBufferedWrites();
+    };
   }
 
   /**

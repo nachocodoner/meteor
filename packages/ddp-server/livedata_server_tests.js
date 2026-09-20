@@ -684,6 +684,643 @@ Tinytest.addAsync(
   }
 );
 
+Tinytest.addAsync(
+  "livedata server - DDP resumption: replacement socket takes over active session",
+  async function (test) {
+    await withTestGracePeriod(async () => {
+      const connectionCalls = trackOnConnectionCalls();
+      let clientConn;
+      let replacementSocket;
+
+      try {
+        ({ clientConn } = await getTestConnections(test));
+        const originalSessionId = clientConn._lastSessionId;
+        const session = Meteor.server.sessions.get(originalSessionId);
+        const originalSocket = session.socket;
+        const originalClose = originalSocket.close.bind(originalSocket);
+        let originalCloseCalled = false;
+        const sentMessages = [];
+        test.isFalse(
+          !!session._removeTimeoutHandle,
+          "the original socket should still be active before replacement",
+        );
+
+        replacementSocket = {
+          _meteorSession: null,
+          headers: {},
+          isClosed: false,
+          url: originalSocket.url,
+          send(rawMessage) {
+            sentMessages.push(JSON.parse(rawMessage));
+          },
+          close() {
+            this.isClosed = true;
+          },
+          setWebsocketTimeout() {},
+        };
+        originalSocket.close = function () {
+          originalCloseCalled = true;
+          // Model a close notification arriving synchronously. Ownership must
+          // already have moved, so this must not close the resumed session.
+          this._meteorSession?.close();
+          originalClose();
+        };
+
+        Meteor.server._handleConnect(replacementSocket, {
+          msg: "connect",
+          session: originalSessionId,
+          receivedCount: session.sentCount,
+          version: session.version,
+          support: [session.version],
+        });
+
+        test.isTrue(
+          replacementSocket._meteorSession === session,
+          "the replacement socket should retain the same session object",
+        );
+
+        test.equal(
+          replacementSocket._meteorSession.id,
+          originalSessionId,
+          "a matching replacement socket should retain the logical session",
+        );
+        test.isTrue(
+          session.socket === replacementSocket,
+          "the replacement socket should become the session owner",
+        );
+        test.isNull(
+          originalSocket._meteorSession,
+          "the replaced socket should no longer reference the session",
+        );
+        test.isTrue(
+          originalCloseCalled,
+          "the replaced transport should be closed after ownership moves",
+        );
+        test.equal(
+          connectionCalls.callsBySessionId.size,
+          1,
+          "socket handoff should not create another logical connection",
+        );
+
+        test.isTrue(
+          Meteor.server.sessions.get(originalSessionId)?.socket === replacementSocket,
+          "the replaced socket close callback should not detach the replacement",
+        );
+
+        replacementSocket._meteorSession.send({ msg: "ping", id: "handoff" });
+        test.equal(
+          sentMessages[sentMessages.length - 1],
+          { msg: "ping", id: "handoff" },
+          "messages after handoff should use the replacement socket",
+        );
+      } finally {
+        connectionCalls.stop();
+        const replacementSession = replacementSocket?._meteorSession;
+        if (replacementSession && Meteor.server.sessions.has(replacementSession.id)) {
+          replacementSession.connectionHandle.close();
+        }
+        clientConn?.disconnect();
+      }
+    });
+  },
+);
+
+Tinytest.addAsync(
+  "livedata server - DDP resumption: replays retained messages after disconnect",
+  async function (test) {
+    await withTestGracePeriod(async () => {
+      const connectionCalls = trackOnConnectionCalls();
+      const methodName = `ddp-resumption-retry-${Random.id()}`;
+      const blockerMethodName = `ddp-resumption-blocker-${Random.id()}`;
+      let methodRuns = 0;
+      let blockerMethodRuns = 0;
+      let trackedDuringRun = false;
+      let releaseBlocker = () => {};
+      let clientConn;
+      let replacementSocket;
+
+      try {
+        ({ clientConn } = await getTestConnections(test));
+        const originalSessionId = clientConn._lastSessionId;
+        const session = Meteor.server.sessions.get(originalSessionId);
+        const originalSocket = session.socket;
+        const receivedCount = session.sentCount;
+        const missedMessages = [
+          {
+            msg: "added",
+            collection: "replay-test",
+            id: "document",
+            fields: { value: 1 },
+          },
+          { msg: "updated", methods: ["method"] },
+          { msg: "result", id: "method", result: "done" },
+        ];
+        const queuedMessage = {
+          msg: "added",
+          collection: "replay-test",
+          id: "queued-document",
+          fields: { value: 2 },
+        };
+        const queuedResult = {
+          msg: "result",
+          id: "queued-method",
+          result: "queued",
+        };
+        const deferredResult = {
+          msg: "result",
+          id: "deferred-method",
+          result: "deferred",
+        };
+        Meteor.server.method_handlers[methodName] = function () {
+          methodRuns += 1;
+          trackedDuringRun = session._inFlightMethodIds.has("lost-method");
+          return "executed";
+        };
+
+        const droppingSocket = {
+          _meteorSession: session,
+          headers: originalSocket.headers,
+          isClosed: false,
+          url: originalSocket.url,
+          send() {},
+          close() {
+            this.isClosed = true;
+          },
+          setWebsocketTimeout() {},
+        };
+        originalSocket._meteorSession = null;
+        session.socket = droppingSocket;
+        missedMessages.forEach((message) => session.send(message));
+        session.close();
+        session.send(queuedMessage);
+        session.send(queuedResult);
+        session.send(deferredResult);
+        session._inFlightMethodIds.add("in-flight-method");
+
+        const sentMessages = [];
+        replacementSocket = {
+          _meteorSession: null,
+          headers: {},
+          isClosed: false,
+          url: originalSocket.url,
+          send(rawMessage) {
+            sentMessages.push(JSON.parse(rawMessage));
+          },
+          close() {
+            this.isClosed = true;
+          },
+          setWebsocketTimeout() {},
+        };
+
+        Meteor.server._handleConnect(replacementSocket, {
+          msg: "connect",
+          session: originalSessionId,
+          receivedCount,
+          version: session.version,
+          support: [session.version],
+        });
+
+        test.isTrue(
+          replacementSocket._meteorSession === session,
+          "a replayable gap should resume the existing session",
+        );
+        test.equal(
+          sentMessages,
+          [
+            { msg: "connected", session: originalSessionId },
+            ...missedMessages,
+            queuedMessage,
+            queuedResult,
+            deferredResult,
+          ],
+          "the replacement should receive connected, replay, then queued messages",
+        );
+        test.equal(
+          session.sentCount,
+          receivedCount + sentMessages.length,
+          "server and client counts should realign to the replayed sequence",
+        );
+        test.equal(
+          connectionCalls.callsBySessionId.size,
+          1,
+          "replaying retained messages should not create a logical connection",
+        );
+
+        session._inFlightMethodIds.delete("in-flight-method");
+        ["method", "queued-method", "in-flight-method", "lost-method"].forEach(
+          (id) => {
+            session.processMessage({ msg: "method", id, method: methodName, params: [] });
+          },
+        );
+        await pollUntil(() => !session.workerRunning);
+        test.equal(
+          methodRuns,
+          1,
+          "only the invocation not known to the resumed session should run",
+        );
+        test.isTrue(
+          trackedDuringRun,
+          "a newly received method should be tracked while its handler runs",
+        );
+        test.equal(
+          [...session._methodIdsToIgnoreOnResume],
+          ["deferred-method"],
+          "only a result without a retry should remain pending",
+        );
+
+        let markBlockerEntered = () => {};
+        const blockerEntered = new Promise((resolve) => {
+          markBlockerEntered = resolve;
+        });
+        const blockerGate = new Promise((resolve) => {
+          releaseBlocker = resolve;
+        });
+        Meteor.server.method_handlers[blockerMethodName] = async function () {
+          blockerMethodRuns += 1;
+          markBlockerEntered();
+          await blockerGate;
+          const error = new Error("expected resumption blocker failure");
+          error._expectedByTest = true;
+          throw error;
+        };
+
+        session.processMessage({
+          msg: "method",
+          id: "blocker-method",
+          method: blockerMethodName,
+          params: [],
+        });
+        session.processMessage({
+          msg: "method",
+          id: "lost-while-blocked",
+          method: methodName,
+          params: [],
+        });
+        session.processMessage({
+          msg: "method",
+          id: "lost-while-blocked",
+          method: methodName,
+          params: [],
+        });
+        await blockerEntered;
+        session.processMessage({
+          msg: "method",
+          id: "deferred-method",
+          method: methodName,
+          params: [],
+        });
+        session.processMessage({
+          msg: "method",
+          id: "deferred-method",
+          method: methodName,
+          params: [],
+        });
+        session.processMessage({
+          msg: "method",
+          id: "blocker-method",
+          method: blockerMethodName,
+          params: [],
+        });
+
+        const secondReplacementMessages = [];
+        const secondReplacementSocket = {
+          _meteorSession: null,
+          headers: {},
+          isClosed: false,
+          url: originalSocket.url,
+          send(rawMessage) {
+            secondReplacementMessages.push(JSON.parse(rawMessage));
+          },
+          close() {
+            this.isClosed = true;
+          },
+          setWebsocketTimeout() {},
+        };
+        Meteor.server._handleConnect(secondReplacementSocket, {
+          msg: "connect",
+          session: originalSessionId,
+          receivedCount: session.sentCount,
+          version: session.version,
+          support: [session.version],
+        });
+        test.equal(secondReplacementMessages, [
+          { msg: "connected", session: originalSessionId },
+        ]);
+        replacementSocket = secondReplacementSocket;
+
+        releaseBlocker();
+        await pollUntil(() => !session.workerRunning);
+        test.equal(
+          methodRuns,
+          2,
+          "a lost invocation should run once while its duplicate retry is suppressed",
+        );
+        test.equal(blockerMethodRuns, 1, "the in-flight method retry should not run");
+        test.isFalse(session._inFlightMethodIds.has("blocker-method"));
+        test.isFalse(session._queuedMethodCounts.has("deferred-method"));
+        test.isFalse(session._queuedMethodCounts.has("blocker-method"));
+        test.isFalse(session._queuedMethodCounts.has("lost-while-blocked"));
+        test.equal(
+          session._methodIdsToIgnoreOnResume.size,
+          0,
+          "queued retry tokens should be consumed after the blocker releases",
+        );
+      } finally {
+        releaseBlocker();
+        delete Meteor.server.method_handlers[methodName];
+        delete Meteor.server.method_handlers[blockerMethodName];
+        connectionCalls.stop();
+        const replacementSession = replacementSocket?._meteorSession;
+        if (replacementSession && Meteor.server.sessions.has(replacementSession.id)) {
+          replacementSession.connectionHandle.close();
+        }
+        clientConn?.disconnect();
+      }
+    });
+  },
+);
+
+Tinytest.addAsync(
+  "livedata server - DDP resumption: preserves replay tail after transport failure",
+  async function (test) {
+    await withTestGracePeriod(async () => {
+      let clientConn;
+      let replacementSocket;
+
+      try {
+        ({ clientConn } = await getTestConnections(test));
+        const sessionId = clientConn._lastSessionId;
+        const session = Meteor.server.sessions.get(sessionId);
+        const originalSocket = session.socket;
+        const receivedCount = session.sentCount;
+        const missedMessages = [
+          { msg: "updated", methods: ["one"] },
+          { msg: "result", id: "one", result: "first" },
+          { msg: "result", id: "two", result: "second" },
+        ];
+
+        const droppingSocket = {
+          _meteorSession: session,
+          headers: originalSocket.headers,
+          isClosed: false,
+          url: originalSocket.url,
+          send() {},
+          close() {
+            this.isClosed = true;
+          },
+          setWebsocketTimeout() {},
+        };
+        originalSocket._meteorSession = null;
+        session.socket = droppingSocket;
+        missedMessages.forEach((message) => session.send(message));
+        session.close();
+
+        const firstAttempt = [];
+        const failingSocket = {
+          _meteorSession: null,
+          headers: {},
+          isClosed: false,
+          url: originalSocket.url,
+          send(rawMessage) {
+            if (firstAttempt.length === 2) {
+              throw new Error("replacement transport failed");
+            }
+            firstAttempt.push(JSON.parse(rawMessage));
+          },
+          close() {
+            this.isClosed = true;
+          },
+          setWebsocketTimeout() {},
+        };
+
+        let replayError;
+        try {
+          Meteor.server._handleConnect(failingSocket, {
+            msg: "connect",
+            session: sessionId,
+            receivedCount,
+            version: session.version,
+            support: [session.version],
+          });
+        } catch (error) {
+          replayError = error;
+        }
+
+        test.equal(replayError?.message, "replacement transport failed");
+        test.equal(
+          firstAttempt,
+          [{ msg: "connected", session: sessionId }, missedMessages[0]],
+          "the failed transport should retain only frames it accepted",
+        );
+        test.equal(
+          session.pendingReplayMessages.map(({ stringMsg }) => JSON.parse(stringMsg)),
+          missedMessages.slice(1),
+          "the unsent replay tail should remain pending",
+        );
+
+        const secondAttempt = [];
+        replacementSocket = {
+          _meteorSession: null,
+          headers: {},
+          isClosed: false,
+          url: originalSocket.url,
+          send(rawMessage) {
+            secondAttempt.push(JSON.parse(rawMessage));
+          },
+          close() {
+            this.isClosed = true;
+          },
+          setWebsocketTimeout() {},
+        };
+        Meteor.server._handleConnect(replacementSocket, {
+          msg: "connect",
+          session: sessionId,
+          receivedCount: receivedCount + firstAttempt.length,
+          version: session.version,
+          support: [session.version],
+        });
+
+        test.equal(
+          secondAttempt,
+          [{ msg: "connected", session: sessionId }, ...missedMessages.slice(1)],
+          "the next replacement should continue with the unsent replay tail",
+        );
+        test.equal(
+          [...firstAttempt.slice(1), ...secondAttempt.slice(1)],
+          missedMessages,
+          "application frames should be accepted exactly once across attempts",
+        );
+        test.equal(session.pendingReplayMessages, []);
+        test.equal(
+          session.sentCount,
+          receivedCount + firstAttempt.length + secondAttempt.length,
+          "the final count should match all accepted replacement frames",
+        );
+      } finally {
+        const replacementSession = replacementSocket?._meteorSession;
+        if (replacementSession && Meteor.server.sessions.has(replacementSession.id)) {
+          replacementSession.connectionHandle.close();
+        }
+        clientConn?.disconnect();
+      }
+    });
+  },
+);
+
+Tinytest.addAsync(
+  "livedata server - DDP resumption: invalid active handoff retires old session",
+  async function (test) {
+    await withTestGracePeriod(async () => {
+      const connectionCalls = trackOnConnectionCalls();
+      let clientConn;
+      let replacementSocket;
+
+      try {
+        ({ clientConn } = await getTestConnections(test));
+        const sessionId = clientConn._lastSessionId;
+        const session = Meteor.server.sessions.get(sessionId);
+        replacementSocket = {
+          _meteorSession: null,
+          headers: {},
+          isClosed: false,
+          url: session.socket.url,
+          send() {},
+          close() {
+            this.isClosed = true;
+          },
+          setWebsocketTimeout() {},
+        };
+
+        Meteor.server._handleConnect(replacementSocket, {
+          msg: "connect",
+          session: sessionId,
+          receivedCount: session.sentCount + 1,
+          version: session.version,
+          support: [session.version],
+        });
+
+        test.isFalse(
+          Meteor.server.sessions.has(sessionId),
+          "an unreplayable active session should be removed",
+        );
+        test.notEqual(replacementSocket._meteorSession.id, sessionId);
+        test.equal(
+          connectionCalls.callsBySessionId.size,
+          2,
+          "the replacement should be the only newly-created session",
+        );
+      } finally {
+        connectionCalls.stop();
+        replacementSocket?._meteorSession?.connectionHandle.close();
+        clientConn?.disconnect();
+      }
+    });
+  },
+);
+
+Tinytest.addAsync(
+  "livedata server - DDP resumption: zero grace period disables active handoff",
+  async function (test) {
+    const previousGracePeriod = Meteor.server.options.disconnectGracePeriod;
+    let clientConn;
+    let replacementSocket;
+
+    try {
+      Meteor.server.options.disconnectGracePeriod = 0;
+      ({ clientConn } = await getTestConnections(test));
+      const sessionId = clientConn._lastSessionId;
+      const session = Meteor.server.sessions.get(sessionId);
+      replacementSocket = {
+        _meteorSession: null,
+        headers: {},
+        isClosed: false,
+        url: session.socket.url,
+        send() {},
+        close() {
+          this.isClosed = true;
+        },
+        setWebsocketTimeout() {},
+      };
+
+      Meteor.server._handleConnect(replacementSocket, {
+        msg: "connect",
+        session: sessionId,
+        receivedCount: session.sentCount,
+        version: session.version,
+        support: [session.version],
+      });
+
+      test.isFalse(Meteor.server.sessions.has(sessionId));
+      test.notEqual(
+        replacementSocket._meteorSession.id,
+        sessionId,
+        "resumption should remain disabled when the grace period is zero",
+      );
+    } finally {
+      Meteor.server.options.disconnectGracePeriod = previousGracePeriod;
+      replacementSocket?._meteorSession?.connectionHandle.close();
+      clientConn?.disconnect();
+    }
+  },
+);
+
+Tinytest.addAsync(
+  "livedata server - DDP resumption: bounds retained history",
+  async function (test) {
+    const previousLength = Meteor.server.options.maxMessageQueueLength;
+    const previousBytes = Meteor.server.options.maxMessageHistoryBytes;
+    let clientConn;
+
+    try {
+      ({ clientConn } = await getTestConnections(test));
+      const session = Meteor.server.sessions.get(clientConn._lastSessionId);
+      const originalSocket = session.socket;
+      const receivedCount = session.sentCount;
+      originalSocket._meteorSession = null;
+      session.socket = {
+        _meteorSession: session,
+        headers: originalSocket.headers,
+        isClosed: false,
+        url: originalSocket.url,
+        send() {},
+        close() {
+          this.isClosed = true;
+        },
+        setWebsocketTimeout() {},
+      };
+
+      Meteor.server.options.maxMessageQueueLength = 2;
+      Meteor.server.options.maxMessageHistoryBytes = Number.MAX_SAFE_INTEGER;
+      for (let index = 0; index < 3; index++) {
+        session.send({ msg: "result", id: String(index), result: index });
+      }
+      test.equal(session.messageHistory.length, 2);
+      test.isNull(
+        session._messagesSince(receivedCount),
+        "a count gap older than retained history should not resume",
+      );
+
+      Meteor.server.options.maxMessageHistoryBytes = 80;
+      const countBeforeOversizedFrame = session.sentCount;
+      session.send({ msg: "result", id: "large", result: "x".repeat(200) });
+      test.isTrue(session.messageHistoryBytes <= 80);
+      test.isNull(
+        session._messagesSince(countBeforeOversizedFrame),
+        "a frame evicted by the byte limit should not be partially replayed",
+      );
+      test.isNull(session._messagesSince(-1));
+      test.isNull(session._messagesSince(Number.NaN));
+      test.isNull(session._messagesSince(session.sentCount + 1));
+    } finally {
+      Meteor.server.options.maxMessageQueueLength = previousLength;
+      Meteor.server.options.maxMessageHistoryBytes = previousBytes;
+      const session = clientConn && Meteor.server.sessions.get(clientConn._lastSessionId);
+      session?.connectionHandle.close();
+      clientConn?.disconnect();
+    }
+  },
+);
+
 // Test that graceful disconnects (client sends disconnect message) remove session immediately
 Tinytest.addAsync(
   "livedata server - DDP resumption: graceful disconnect removes session immediately",
