@@ -24,6 +24,98 @@ meteor help <command>
 
 Prints detailed help about the specific command.
 
+## meteor shell-completion {#meteorshellcompletion}
+
+Install shell completion for Meteor commands in bash or zsh.
+
+```bash
+meteor shell-completion --install
+```
+
+This command writes the completion script to `~/.meteor/meteor-completion.sh`
+and adds a source line to your shell startup file so completion is loaded
+automatically in future terminal sessions.
+
+The generated script embeds the current top-level Meteor command list at install
+time for faster and more reliable first-argument completion. Re-run
+`meteor shell-completion --install` after updating your Meteor checkout to
+refresh that embedded list.
+
+### Supported Shells
+
+Meteor currently supports `zsh` and `bash`. By default, Meteor detects the
+current shell from the `SHELL` environment variable. Use `--shell` when you
+want to install completion for a different shell explicitly.
+
+```bash
+meteor shell-completion --install --shell zsh
+meteor shell-completion --install --shell bash
+```
+
+### What Gets Completed
+
+- Top-level commands such as `run`, `create`, `add`, and `update`
+- Subcommands such as `help` and `admin`
+- Command options such as `--port` and `--production`
+- Selected command arguments when Meteor can infer them, including package names
+  for `meteor add` and `meteor remove`, plus mobile platforms for
+  `meteor add-platform` and `meteor remove-platform`
+
+### Activate It In The Current Terminal
+
+After installing completion, load it in your current terminal session:
+
+```bash
+source ~/.meteor/meteor-completion.sh
+```
+
+New terminal sessions will pick it up automatically from your shell startup
+file.
+
+If you define Meteor aliases in your shell before sourcing the completion
+script, Meteor will register completion for aliases that resolve to the Meteor
+CLI as well.
+
+### Startup Files Meteor Updates
+
+- `zsh`: `~/.zshrc`
+- `bash` on macOS: `~/.bash_profile`, and `~/.bashrc` if that file already exists
+- `bash` on Linux and other Unix-like systems: `~/.bashrc`
+
+### Print The Script Without Installing
+
+If you prefer to manage shell configuration yourself, print the completion
+script directly:
+
+```bash
+meteor shell-completion --script
+meteor shell-completion --script --shell zsh
+```
+
+You can redirect that output to a file or source it manually from your own shell
+configuration.
+
+If you add or change shell aliases after sourcing the script, source it again so
+those aliases are registered for completion.
+
+### Uninstall
+
+```bash
+meteor shell-completion --uninstall
+```
+
+This removes `~/.meteor/meteor-completion.sh` and deletes the
+`# Meteor autocompletion` block that Meteor added to your startup files.
+
+### Troubleshooting
+
+- Run `source ~/.meteor/meteor-completion.sh` after reinstalling the script in
+  your current shell.
+- Re-run `meteor shell-completion --install` after updating your Meteor checkout
+  so the embedded top-level command list is refreshed.
+- If a custom alias still does not complete, define the alias before sourcing
+  `~/.meteor/meteor-completion.sh`, then source the file again.
+
 ## meteor run {#meteorrun}
 
 Run a meteor development server in the current project.
@@ -364,6 +456,26 @@ Blaze app plus a web app manifest, icons, a dependency-free service worker and a
 
 **Meteor packages:**
 - `meteor-base`, `mobile-experience`, `mongo`, `blaze-html-templates`, `jquery`, `reactive-var`, `tracker`, `standard-minifier-css`, `standard-minifier-js`, `es5-shim`, `ecmascript`, `typescript`, `shell-server`, `hot-module-replacement`, `blaze-hot`, `rspack`
+
+**Service worker behavior:**
+
+- In development, the service worker precaches only its static offline files.
+  Application bundles, navigation requests, and other traffic stay on the
+  network so hot code push does not reuse a stale bundle.
+- In production, navigation is network-first with `offline.html` as a fallback,
+  hashed bundles use stale-while-revalidate, and images and fonts use a
+  cache-first strategy.
+- DDP traffic under `/sockjs/` and `/websocket` is never intercepted.
+
+`localhost` is a secure context, so the generated app is installable during
+local development. A browser on a phone or another device requires the app to
+be served over HTTPS before offering installation.
+
+The skeleton provides an installable app shell and offline fallback page. It
+does not synchronize Meteor data, queue methods, or replay writes while the
+application is offline; add those capabilities separately if your application
+needs them.
+
 </details>
 
 <details>

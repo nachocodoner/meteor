@@ -109,8 +109,13 @@ export const ReplicationMethods = {
           self._collection.remove(mongoId);
         } else if (msg.msg === 'changed') {
           if (!doc) throw new Error('Expected to find a document to change');
-          // DDP omits fields when there are none, including duplicate adds
-          // converted to changes for retained client documents.
+          // With NO_MERGE_NO_HISTORY, stopping a full subscription retains its document.
+          // An ID-only publication can then add it again, with DDP omitting empty fields:
+          //   return records.find('record', { projection: { _id: 1 } });
+          //   // Wire: { msg: 'added', collection: 'records', id: 'record' }
+          // The duplicate add becomes a change. Without the empty-fields fallback,
+          // Object.keys(undefined) throws "Cannot convert undefined or null to object"
+          // and interrupts the client update batch.
           const keys = Object.keys(msg.fields || {});
           if (keys.length > 0) {
             var modifier = {};
