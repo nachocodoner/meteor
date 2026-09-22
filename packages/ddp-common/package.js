@@ -18,6 +18,7 @@ Package.onUse(function (api) {
   api.addFiles("random_stream.js", ["client", "server"]);
 
   api.export("DDPCommon");
+  api.types("ddp-common.d.ts");
 });
 
 Package.onTest(function (api) {
