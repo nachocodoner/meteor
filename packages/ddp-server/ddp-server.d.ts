@@ -4,6 +4,7 @@ export namespace DDPServer {
     useDummyDocumentView: boolean;
     useCollectionView: boolean;
     doAccountingForCollection: boolean;
+    noSendRemoves?: boolean;
   }
 
   /** The built-in publication strategies, passed to `setPublicationStrategy`. */
@@ -12,5 +13,6 @@ export namespace DDPServer {
     NO_MERGE_NO_HISTORY: PublicationStrategy;
     NO_MERGE: PublicationStrategy;
     NO_MERGE_MULTI: PublicationStrategy;
+    CUSTOM: PublicationStrategy;
   };
 }

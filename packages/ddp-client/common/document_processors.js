@@ -20,11 +20,13 @@ export class DocumentProcessors {
 
     if (serverDoc) {
       // Some outstanding stub wrote here.
-      // Custom no-removes publications can re-add retained documents. Merge
-      // their fields into the server snapshot without overwriting stub values
-      // in the local store; _process_updated applies it when all stubs settle.
+      // Non-merging publications can add an existing document again. Keep
+      // server changes in the snapshot until outstanding stub writes settle.
       if (serverDoc.document !== undefined && !self._resetStores) {
-        DiffSequence.applyChanges(serverDoc.document, msg.fields || Object.create(null));
+        DiffSequence.applyChanges(
+          serverDoc.document,
+          msg.fields || Object.create(null),
+        );
         return;
       }
 
