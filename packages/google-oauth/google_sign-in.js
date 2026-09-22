@@ -69,8 +69,8 @@ const getScopes = options => {
 
 export const signOut = Google.signOut = () => 
   gplusPromise.then(gplus => 
-    new Promise(resolve => 
-      gplus.logout(resolve)
+    new Promise((resolve, reject) =>
+      gplus.logout(resolve, reject)
     )
   );
 
