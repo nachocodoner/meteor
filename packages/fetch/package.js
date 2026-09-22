@@ -15,7 +15,7 @@ Package.onUse(function (api) {
   api.use("modern-browsers");
   api.use("promise");
 
-  api.mainModule("modern.js", "web.browser");
+  api.mainModule("modern.js", "modern");
   api.mainModule("legacy.js", "legacy");
   api.mainModule("server.js", "server");
 
