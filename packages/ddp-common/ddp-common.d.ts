@@ -1,4 +1,5 @@
 import type { Meteor } from 'meteor/meteor';
+import type { Random } from 'meteor/random';
 
 export namespace DDPCommon {
   interface MethodInvocationOptions {
@@ -40,6 +41,8 @@ export namespace DDPCommon {
      * or `undefined` for a client stub.
      */
     connection: Meteor.Connection | null | undefined;
+    randomSeed: MethodInvocationOptions['randomSeed'];
+    randomStream: RandomStream | null;
   }
 
   /** Supported DDP protocol versions, newest first. */
@@ -52,7 +55,7 @@ export namespace DDPCommon {
   function stringifyDDP(msg: Record<string, unknown>): string;
 
   /** Derive the deterministic random seed used by a method stub. */
-  function makeRpcSeed(enclosing: MethodInvocation, methodName: string): unknown;
+  function makeRpcSeed(enclosing: MethodInvocation | null | undefined, methodName: string): string;
 
   /** Options for constructing a `Heartbeat`. */
   interface HeartbeatOptions {
@@ -63,8 +66,8 @@ export namespace DDPCommon {
   }
 
   /** Client/server heartbeat used to detect dropped DDP connections. */
-  interface Heartbeat {
-    new (options: HeartbeatOptions): Heartbeat;
+  class Heartbeat {
+    constructor(options: HeartbeatOptions);
     /** Begin sending pings and watching for timeouts. */
     start(): void;
     /** Stop all heartbeat timers. */
@@ -73,8 +76,19 @@ export namespace DDPCommon {
     messageReceived(): void;
   }
 
+  type RandomStreamSeed = string | number | (() => string | number);
+
+  interface RandomStreamScope {
+    randomSeed?: RandomStreamSeed | readonly RandomStreamSeed[] | null;
+    randomStream?: RandomStream | null;
+  }
+
   /** A deterministic, seeded source of `Random` generators. */
-  interface RandomStream {
-    new (options: { seed?: string | string[] }): RandomStream;
+  class RandomStream {
+    constructor(options: { seed?: RandomStreamSeed | readonly RandomStreamSeed[] | null });
+    /** Internal lookup used by `get` to create or reuse a named sequence. */
+    _sequence(name: string): Random.RandomGenerator;
+    /** Use a named sequence for the scope, or `Random.insecure` without a scope. */
+    static get(scope: RandomStreamScope | null | undefined, name?: string): Random.RandomGenerator;
   }
 }

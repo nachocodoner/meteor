@@ -10,6 +10,6 @@ const connectionHandle = DDP.connect("http://localhost:3000")
 expectTypeOf(connectionHandle.subscriptionId).toEqualTypeOf<string>();
 
 // @ts-expect-error Every DDP subscription handle includes its subscription ID.
-const missingId: Meteor.SubscriptionHandle = { ready: () => false, stop() {} };
+const missingId: Meteor.SubscriptionHandleWithId = { ready: () => false, stop() {} };
 // @ts-expect-error The public handle property is subscriptionId, not id.
 handle.id;

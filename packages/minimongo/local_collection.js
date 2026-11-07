@@ -7,6 +7,7 @@ import {
   isOperatorObject,
   populateDocumentWithQueryFields,
   projectionDetails,
+  setOwnProperty,
 } from './common.js';
 
 import { getAsyncMethodName } from './constants';
@@ -1184,11 +1185,11 @@ LocalCollection._compileProjection = fields => {
       if (rule === Object(rule)) {
         // For sub-objects/subsets we branch
         if (doc[key] === Object(doc[key])) {
-          result[key] = transform(doc[key], rule);
+          setOwnProperty(result, key, transform(doc[key], rule));
         }
       } else if (details.including) {
         // Otherwise we don't even touch this subfield
-        result[key] = EJSON.clone(doc[key]);
+        setOwnProperty(result, key, EJSON.clone(doc[key]));
       } else {
         delete result[key];
       }
@@ -1236,7 +1237,7 @@ LocalCollection._createUpsertDocument = (selector, modifier) => {
   }
 
   // Replacement can take _id from query document
-  const replacement = Object.assign({}, modifier);
+  const replacement = {...modifier};
   if (newDoc._id) {
     replacement._id = newDoc._id;
   }
@@ -1526,7 +1527,7 @@ LocalCollection._modify = (doc, modifier, options = {}) => {
   });
 
   Object.keys(newDoc).forEach(key => {
-    doc[key] = newDoc[key];
+    setOwnProperty(doc, key, newDoc[key]);
   });
 };
 
@@ -1752,7 +1753,8 @@ LocalCollection._selectorIsId = selector =>
 // Is the selector just lookup by _id (shorthand or not)?
 LocalCollection._selectorIsIdPerhapsAsObject = selector =>
   LocalCollection._selectorIsId(selector) ||
-  LocalCollection._selectorIsId(selector && selector._id) &&
+  selector != null && hasOwn.call(selector, '_id') &&
+  LocalCollection._selectorIsId(selector._id) &&
   Object.keys(selector).length === 1
 ;
 
@@ -1872,14 +1874,14 @@ const MODIFIERS = {
       throw MinimongoError('Invalid $currentDate modifier', {field});
     }
 
-    target[field] = new Date();
+    setOwnProperty(target, field, new Date());
   },
   $inc(target, field, arg) {
     if (typeof arg !== 'number') {
       throw MinimongoError('Modifier $inc allowed for numbers only', {field});
     }
 
-    if (field in target) {
+    if (hasOwn.call(target, field)) {
       if (typeof target[field] !== 'number') {
         throw MinimongoError(
           'Cannot apply $inc modifier to non-number',
@@ -1889,7 +1891,7 @@ const MODIFIERS = {
 
       target[field] += arg;
     } else {
-      target[field] = arg;
+      setOwnProperty(target, field, arg);
     }
   },
   $min(target, field, arg) {
@@ -1897,7 +1899,7 @@ const MODIFIERS = {
       throw MinimongoError('Modifier $min allowed for numbers only', {field});
     }
 
-    if (field in target) {
+    if (hasOwn.call(target, field)) {
       if (typeof target[field] !== 'number') {
         throw MinimongoError(
           'Cannot apply $min modifier to non-number',
@@ -1906,10 +1908,10 @@ const MODIFIERS = {
       }
 
       if (target[field] > arg) {
-        target[field] = arg;
+        setOwnProperty(target, field, arg);
       }
     } else {
-      target[field] = arg;
+      setOwnProperty(target, field, arg);
     }
   },
   $max(target, field, arg) {
@@ -1917,7 +1919,7 @@ const MODIFIERS = {
       throw MinimongoError('Modifier $max allowed for numbers only', {field});
     }
 
-    if (field in target) {
+    if (hasOwn.call(target, field)) {
       if (typeof target[field] !== 'number') {
         throw MinimongoError(
           'Cannot apply $max modifier to non-number',
@@ -1926,10 +1928,10 @@ const MODIFIERS = {
       }
 
       if (target[field] < arg) {
-        target[field] = arg;
+        setOwnProperty(target, field, arg);
       }
     } else {
-      target[field] = arg;
+      setOwnProperty(target, field, arg);
     }
   },
   $mul(target, field, arg) {
@@ -1937,7 +1939,7 @@ const MODIFIERS = {
       throw MinimongoError('Modifier $mul allowed for numbers only', {field});
     }
 
-    if (field in target) {
+    if (hasOwn.call(target, field)) {
       if (typeof target[field] !== 'number') {
         throw MinimongoError(
           'Cannot apply $mul modifier to non-number',
@@ -1947,7 +1949,7 @@ const MODIFIERS = {
 
       target[field] *= arg;
     } else {
-      target[field] = 0;
+      setOwnProperty(target, field, 0);
     }
   },
   $rename(target, field, arg, keypath, doc) {
@@ -1988,7 +1990,7 @@ const MODIFIERS = {
       throw MinimongoError('$rename target field invalid', {field});
     }
 
-    target2[keyparts.pop()] = object;
+    setOwnProperty(target2, keyparts.pop(), object);
   },
   $set(target, field, arg) {
     if (target !== Object(target)) { // not an array or an object
@@ -2008,7 +2010,7 @@ const MODIFIERS = {
 
     assertHasValidFieldNames(arg);
 
-    target[field] = arg;
+    setOwnProperty(target, field, arg);
   },
   $setOnInsert(target, field, arg) {
     // converted to `$set` in `_modify`
@@ -2016,7 +2018,7 @@ const MODIFIERS = {
   $unset(target, field, arg) {
     if (target !== undefined) {
       if (target instanceof Array) {
-        if (field in target) {
+        if (hasOwn.call(target, field)) {
           target[field] = null;
         }
       } else {
@@ -2025,8 +2027,8 @@ const MODIFIERS = {
     }
   },
   $push(target, field, arg) {
-    if (target[field] === undefined) {
-      target[field] = [];
+    if (!hasOwn.call(target, field) || target[field] === undefined) {
+      setOwnProperty(target, field, []);
     }
 
     if (!(target[field] instanceof Array)) {
@@ -2126,11 +2128,11 @@ const MODIFIERS = {
     // Actually slice.
     if (slice !== undefined) {
       if (slice === 0) {
-        target[field] = []; // differs from Array.slice!
+        setOwnProperty(target, field, []); // differs from Array.slice!
       } else if (slice < 0) {
-        target[field] = target[field].slice(slice);
+        setOwnProperty(target, field, target[field].slice(slice));
       } else {
-        target[field] = target[field].slice(0, slice);
+        setOwnProperty(target, field, target[field].slice(0, slice));
       }
     }
   },
@@ -2141,10 +2143,10 @@ const MODIFIERS = {
 
     assertHasValidFieldNames(arg);
 
-    const toPush = target[field];
+    const toPush = hasOwn.call(target, field) ? target[field] : undefined;
 
     if (toPush === undefined) {
-      target[field] = arg;
+      setOwnProperty(target, field, arg);
     } else if (!(toPush instanceof Array)) {
       throw MinimongoError(
         'Cannot apply $pushAll modifier to non-array',
@@ -2169,9 +2171,9 @@ const MODIFIERS = {
 
     assertHasValidFieldNames(values);
 
-    const toAdd = target[field];
+    const toAdd = hasOwn.call(target, field) ? target[field] : undefined;
     if (toAdd === undefined) {
-      target[field] = values;
+      setOwnProperty(target, field, values);
     } else if (!(toAdd instanceof Array)) {
       throw MinimongoError(
         'Cannot apply $addToSet modifier to non-array',
@@ -2243,7 +2245,7 @@ const MODIFIERS = {
       out = toPull.filter(element => !LocalCollection._f._equal(element, arg));
     }
 
-    target[field] = out;
+    setOwnProperty(target, field, out);
   },
   $pullAll(target, field, arg) {
     if (!(typeof arg === 'object' && arg instanceof Array)) {
@@ -2270,9 +2272,9 @@ const MODIFIERS = {
       );
     }
 
-    target[field] = toPull.filter(object =>
+    setOwnProperty(target, field, toPull.filter(object =>
       !arg.some(element => LocalCollection._f._equal(object, element))
-    );
+    ));
   },
   $bit(target, field, arg) {
     // XXX mongo only supports $bit on integers, and we only support
@@ -2414,13 +2416,13 @@ function findModTarget(doc, keyparts, options = {}) {
     } else {
       assertIsValidFieldName(keypart);
 
-      if (!(keypart in doc)) {
+      if (!hasOwn.call(doc, keypart)) {
         if (options.noCreate) {
           return undefined;
         }
 
         if (!last) {
-          doc[keypart] = {};
+          setOwnProperty(doc, keypart, {});
         }
       }
     }

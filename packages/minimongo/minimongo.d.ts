@@ -87,6 +87,7 @@ export class Cursor<T = Record<string, unknown>> {
 }
 
 export class LocalCollection<T = Record<string, unknown>> {
+  /** Internal query helpers used when restoring documents into live results. */
   static _insertInResultsSync<T extends { _id: MinimongoId }>(query: MinimongoInsertQuery<T>, doc: T): void;
   static _insertInResultsAsync<T extends { _id: MinimongoId }>(query: MinimongoInsertQuery<T>, doc: T): Promise<void>;
 
